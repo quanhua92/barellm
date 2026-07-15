@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# BareLLM pre-commit hook
+# Runs ruff check + ruff format on staged Python files, then re-stages fixes.
+#
+# One-time setup (per clone):
+#   git config core.hooksPath githooks
+#
+# Bypass for a single commit:
+#   git commit --no-verify
+
+set -euo pipefail
+
+# Collect staged Python files (added/copied/modified only)
+files=$(git diff --cached --name-only --diff-filter=ACM -- '*.py' || true)
+
+if [ -z "$files" ]; then
+    exit 0
+fi
+
+echo "=> ruff check --fix"
+uv run ruff check --fix $files
+
+echo "=> ruff format"
+uv run ruff format $files
+
+# Re-stage any files modified by ruff
+git add $files
+
+echo "=> pre-commit OK"

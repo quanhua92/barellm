@@ -1,0 +1,54 @@
+[project]
+name = "barellm"
+version = "0.1.0"
+description = "Learn how LLM inference works by building a model server from scratch"
+readme = "README.md"
+authors = [
+    { name = "Quan Hua", email = "quanhua92@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "torch",
+    "transformers>=5.13.0",
+    "accelerate>=1.14.0",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cuda", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+    { index = "pytorch-cuda", marker = "sys_platform == 'win32'" },
+    { index = "pypi", marker = "sys_platform == 'darwin'" },
+    { index = "pytorch-cpu", marker = "sys_platform == 'linux' and platform_machine != 'x86_64'" },
+]
+
+[project.scripts]
+barellm = "barellm.cli:main"
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.411",
+    "pytest>=9.1.0",
+    "ruff>=0.15.17",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

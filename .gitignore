@@ -1,0 +1,29 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[codz]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+wheels/
+*.egg-info/
+
+# Virtual environments
+.venv
+
+# Test / cache
+.pytest_cache/
+
+# Pyright generated type stubs
+typings/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project
+tmp/
+*.log
