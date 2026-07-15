@@ -19,7 +19,8 @@ else:
 
 print(f"dtype={dtype} device={device}")
 tokenizer = AutoTokenizer.from_pretrained(model_id)
-model = AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype, device_map=device)
+model = AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype)
+model = model.to(device)
 model.eval()
 
 print(f"model={model}")
