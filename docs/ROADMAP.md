@@ -24,6 +24,14 @@ The build order is inside-out: model internals first, then the engine around the
 
 ---
 
+## Spinoff — Refusal Fine-Tuning
+
+Parallel to the core engineering phases, we track a spinoff project to train Qwen3-0.6B to recognize context insufficiency and answer with a clean refusal (`"No"`). 
+
+For the complete preparation, benchmarking, training, and validation plan, see the [FINETUNE.md](file:///Users/quan/workspaces/barellm/docs/FINETUNE.md) guide.
+
+---
+
 ## Phase 1 — Run the Black Box
 
 **Goal:** Get a real LLM (Qwen3-0.6B) generating text on your machine. Establish the reference you'll rebuild from scratch.
