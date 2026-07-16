@@ -1,4 +1,5 @@
 import argparse
+import sys
 
 
 def add_run_parser(subparsers) -> None:
@@ -19,6 +20,12 @@ def add_run_parser(subparsers) -> None:
         "--local_files_only",
         action="store_true",
         help="Use local files only instead of downloading from Hugging Face Hub",
+    )
+    run.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Print generation stats (dtype, device, throughput, etc.)",
     )
 
 
@@ -74,15 +81,36 @@ def cmd_rm(args: argparse.Namespace) -> None:
 def cmd_run(args: argparse.Namespace) -> None:
     from barellm.generate import generate
 
-    print(
-        generate(
-            args.prompt,
-            args.max_new_tokens,
-            args.temperature,
-            args.top_p,
-            args.local_files_only,
-        )
+    text, stats = generate(
+        args.prompt,
+        args.max_new_tokens,
+        args.temperature,
+        args.top_p,
+        args.local_files_only,
+        args.verbose,
     )
+    print(text)
+    if stats:
+        print(_format_stats(stats), file=sys.stderr)
+
+
+def _format_stats(stats: dict) -> str:
+    parts = [
+        f"dtype={stats['dtype']}",
+        f"device={stats['device']}",
+        f"attn_impl={stats['attn_impl']}",
+    ]
+    if "sdpa_backends" in stats:
+        b = stats["sdpa_backends"]
+        parts.append(
+            f"sdpa[flash={b['flash']} mem_eff={b['mem_efficient']} "
+            f"math={b['math']} cudnn={b['cudnn']}]"
+        )
+    parts.append(f"prompt_tokens={stats['prompt_tokens']}")
+    parts.append(f"generated_tokens={stats['generated_tokens']}")
+    parts.append(f"total_time={stats['total_time']:.2f}s")
+    parts.append(f"throughput={stats['throughput']:.1f} tok/s")
+    return " ".join(parts)
 
 
 COMMANDS = {

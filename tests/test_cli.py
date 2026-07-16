@@ -222,15 +222,18 @@ class TestCmdRun:
 
         captured: dict[str, object] = {}
 
-        def fake_generate(prompt, max_new_tokens, temperature, top_p, local_files_only):
+        def fake_generate(
+            prompt, max_new_tokens, temperature, top_p, local_files_only, verbose
+        ):
             captured.update(
                 prompt=prompt,
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
                 top_p=top_p,
                 local_files_only=local_files_only,
+                verbose=verbose,
             )
-            return "generated-output"
+            return "generated-output", None
 
         monkeypatch.setattr(generate_mod, "generate", fake_generate)
 
@@ -240,6 +243,7 @@ class TestCmdRun:
             temperature=0.2,
             top_p=0.8,
             local_files_only=True,
+            verbose=False,
         )
         cli.cmd_run(args)
 
@@ -248,6 +252,7 @@ class TestCmdRun:
         assert captured["temperature"] == 0.2
         assert captured["top_p"] == 0.8
         assert captured["local_files_only"] is True
+        assert captured["verbose"] is False
 
     def test_prints_generated_output(
         self,
@@ -256,13 +261,16 @@ class TestCmdRun:
     ) -> None:
         import barellm.generate as generate_mod
 
-        monkeypatch.setattr(generate_mod, "generate", lambda *a, **k: "hello world")
+        monkeypatch.setattr(
+            generate_mod, "generate", lambda *a, **k: ("hello world", None)
+        )
         args = argparse.Namespace(
             prompt="x",
             max_new_tokens=1,
             temperature=0.0,
             top_p=1.0,
             local_files_only=False,
+            verbose=False,
         )
         cli.cmd_run(args)
         out = capsys.readouterr().out
