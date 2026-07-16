@@ -1,11 +1,13 @@
-run:
-	uv run barellm run
+set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
+
+run prompt *args:
+	uv run barellm run "{{prompt}}" {{args}}
 
 serve:
 	uv run barellm serve
 
-pull:
-	uv run barellm pull
+pull *args:
+	uv run barellm pull {{args}}
 
 ls:
 	uv run barellm ls
