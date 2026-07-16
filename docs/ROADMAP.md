@@ -36,13 +36,13 @@ For the complete preparation, benchmarking, training, and validation plan, see t
 
 **Goal:** Get a real LLM (Qwen3-0.6B) generating text on your machine. Establish the reference you'll rebuild from scratch.
 
-- [ ] Run Qwen3-0.6B with HuggingFace transformers
-- [ ] Count every parameter — know every tensor shape
-- [ ] Benchmark the prefill phase (time-to-first-token)
-- [ ] Benchmark the decode phase (tokens per second)
-- [ ] Compare decode with and without KV cache
-- [ ] Wire up `barellm pull`, `barellm ls`, and `barellm rm` CLI commands (model management)
-- [ ] Wire up `barellm run` CLI command (generate text via HuggingFace)
+- [x] Run Qwen3-0.6B with HuggingFace transformers
+- [x] Count every parameter — know every tensor shape
+- [x] Benchmark the prefill phase (time-to-first-token)
+- [x] Benchmark the decode phase (tokens per second)
+- [x] Compare decode with and without KV cache
+- [x] Wire up `barellm pull`, `barellm ls`, and `barellm rm` CLI commands (model management)
+- [x] Wire up `barellm run` CLI command (generate text via HuggingFace)
 
 ---
 
