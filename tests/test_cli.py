@@ -6,7 +6,6 @@ import pytest
 
 from barellm import cli
 
-
 # --- Parser tests -----------------------------------------------------------
 
 
@@ -170,7 +169,9 @@ class TestCmdLs:
     ) -> None:
         import barellm.hub as hub
 
-        monkeypatch.setattr(hub, "list_models", lambda: ["Qwen/Qwen3-0.6B", "other/x"])
+        monkeypatch.setattr(
+            hub, "list_models", lambda: [("Qwen/Qwen3-0.6B", True), ("other/x", False)]
+        )
         cli.cmd_ls(argparse.Namespace())
         out = capsys.readouterr().out
         assert "Downloaded models:" in out

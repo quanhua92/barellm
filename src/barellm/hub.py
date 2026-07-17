@@ -6,6 +6,15 @@ from huggingface_hub import snapshot_download
 HF_CACHE = Path.home() / ".cache" / "huggingface" / "hub"
 
 
+def has_weights(model_dir: Path) -> bool:
+    snapshots = model_dir / "snapshots"
+    if not snapshots.exists():
+        return False
+    return any(snapshots.glob("*/**/*.safetensors")) or any(
+        snapshots.glob("*/**.*.bin")
+    )
+
+
 def download_model(model_id: str, revision: str = "main") -> Path:
     """
     Download a model from Hugging Face Hub and return the local path to the model directory.
@@ -37,7 +46,8 @@ def list_models() -> list[str]:
         name = model_dir.name
         if model_dir.is_dir() and name.startswith("models--"):
             name = name.replace("models--", "").replace("--", "/")
-            models.append(name)
+            ready = has_weights(model_dir)
+            models.append((name, ready))
     return sorted(models)
 
 

@@ -63,8 +63,9 @@ def cmd_ls(args: argparse.Namespace) -> None:
     models = list_models()
     if models:
         print("Downloaded models:")
-        for model in models:
-            print(f"- {model}")
+        for model, ready in models:
+            flag = "" if ready else " [config only]"
+            print(f"- {model}{flag}")
     else:
         print("No models downloaded.")
 
