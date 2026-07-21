@@ -114,3 +114,42 @@ def sample_top_p(
 
     # Map back to original indices
     return sorted_indices.gather(-1, sampled_indices)
+
+
+def sample(
+    logits: torch.Tensor,
+    temperature: float = 0.7,
+    top_k: int = 0,
+    top_p: float = 1.0,
+):
+    """greedy -> temperature -> top_k -> top_p -> multinomial"""
+    if temperature <= 0.01:
+        return greedy(logits)
+
+    # 1. Temperature
+    logits = logits / max(temperature, 1e-8)
+
+    # 2. Top-k: mask everything below the k-th highest logit
+    if top_k > 0:
+        k = min(top_k, logits.size(-1))
+        values, _ = torch.topk(logits, k)
+        logits = torch.where(
+            logits < values[-1:], torch.full_like(logits, float("-inf")), logits
+        )
+
+    # 3. Top-p: mask tokens beyond cumulative probs threshold
+    if top_p < 1.0:
+        sorted_logits, sorted_idx = torch.sort(logits, descending=True)
+        cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+
+        # Keep tokens <= top_p, always keep at least one
+        keep = cumulative_probs <= top_p
+        keep[..., 0] = True
+
+        # Map sorted keep-mask back to original vocab ordering, then invert
+        remove = ~keep.scatter(-1, sorted_idx, keep)
+        logits = logits.masked_fill(remove, float("-inf"))
+
+    # 4. Softmax and sample
+    probs = F.softmax(logits, dim=-1)
+    return torch.multinomial(probs, num_samples=1)
