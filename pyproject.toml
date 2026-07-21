@@ -11,6 +11,7 @@ dependencies = [
     "torch",
     "transformers>=5.13.0",
     "accelerate>=1.14.0",
+    "safetensors>=0.8.0",
 ]
 
 [[tool.uv.index]]
