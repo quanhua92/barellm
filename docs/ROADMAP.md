@@ -50,18 +50,18 @@ For the complete preparation, benchmarking, training, and validation plan, see t
 
 **Goal:** Crack open the black box. Trace every mathematical operation from input tokens to output text.
 
-- [ ] Implement token sampling (greedy, temperature, top-k, top-p)
-- [ ] Understand chat templates and special tokens (ChatML format)
-- [ ] Inspect HuggingFace's KV cache structure (`past_key_values`)
-- [ ] Derive the KV cache memory formula by hand
-- [ ] Simulate the memory fragmentation problem
-- [ ] Understand the paged attention block table (logical-to-physical mapping)
-- [ ] Trace the full attention computation (GQA, scaled dot-product, causal mask)
-- [ ] Trace one complete transformer block (RMSNorm -> Attention -> SwiGLU)
-- [ ] Verify RoPE properties (rotary position embedding, relative position)
-- [ ] Implement all stop conditions (EOS, max tokens, stop strings, deadline)
-- [ ] Compare `model.forward()` vs `model.generate()`
-- [ ] Build a simple single-sequence inference engine
+- [x] Implement token sampling (greedy, temperature, top-k, top-p)
+- [x] Understand chat templates and special tokens (ChatML format)
+- [x] Inspect HuggingFace's KV cache structure (`past_key_values`)
+- [x] Derive the KV cache memory formula by hand
+- [x] Simulate the memory fragmentation problem
+- [x] Understand the paged attention block table (logical-to-physical mapping)
+- [x] Trace the full attention computation (GQA, scaled dot-product, causal mask)
+- [x] Trace one complete transformer block (RMSNorm -> Attention -> SwiGLU)
+- [x] Verify RoPE properties (rotary position embedding, relative position)
+- [x] Implement all stop conditions (EOS, max tokens, stop strings, deadline)
+- [x] Compare `model.forward()` vs `model.generate()`
+- [x] Build a simple single-sequence inference engine
 
 ---
 

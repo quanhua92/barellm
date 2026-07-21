@@ -24,3 +24,15 @@ Phase 1 is done — the black box runs and is measured.
 - `barellm run` — generate text via HuggingFace
 
 Next up: Phase 2 — crack open the black box and trace every operation.
+
+---
+
+## 2026-07-21 — Phase 2 complete
+
+Cracked open the black box. Traced every component from input tokens to output text.
+
+Implemented our own sampler (greedy, temperature, top-k, top-p combined) and stop conditions (OpenAI-compatible finish_reason). Built a simple inference engine that replaces model.generate() with our own prefill + decode loop.
+
+Biggest surprises: head_dim is decoupled (q_proj outputs 2048, not 1024), RoPE has 64 frequency planes spanning period 6 to 5M positions, and pre-allocating KV cache wastes ~70% of memory.
+
+Next up: Phase 3 — replace HuggingFace components with custom implementations.
