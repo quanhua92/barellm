@@ -2,11 +2,18 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from barellm.models.embedding import RotaryEmbedding, apply_rotary_pos_emb
 from barellm.utils import check
 
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, hidden_size: int, num_heads: int):
+    def __init__(
+        self,
+        hidden_size: int,
+        num_heads: int,
+        max_seq: int = 2048,
+        theta: float = 1000000.0,
+    ):
         super().__init__()
         check(
             hidden_size % num_heads == 0,
@@ -30,7 +37,11 @@ class CausalSelfAttention(nn.Module):
             self.head_dim * self.num_heads, self.hidden_size, bias=False
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self.rotary_emb = RotaryEmbedding(self.head_dim, max_seq=max_seq, theta=theta)
+
+    def forward(
+        self, x: torch.Tensor, position_ids: torch.Tensor | None = None
+    ) -> torch.Tensor:
         B, S, D = x.shape
 
         # [B, S, D] -> [B, S, H * D_h]
@@ -42,6 +53,10 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, S, self.num_heads, self.head_dim).transpose(1, 2)
         k = k.view(B, S, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(B, S, self.num_heads, self.head_dim).transpose(1, 2)
+
+        # Apply rotation embedding
+        cos, sin = self.rotary_emb(q, position_ids)
+        q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
         # SDPA expects [B, H, S, D_h]
         #     scores = Q @ K^T / sqrt(d) # [S, D_h] @ [D_h, S] -> [S, S]
@@ -56,7 +71,14 @@ class CausalSelfAttention(nn.Module):
 
 
 class GroupedQueryAttention(nn.Module):
-    def __init__(self, hidden_size: int, num_heads: int, num_kv_heads: int):
+    def __init__(
+        self,
+        hidden_size: int,
+        num_heads: int,
+        num_kv_heads: int,
+        max_seq: int = 2048,
+        theta: float = 1000000.0,
+    ):
         super().__init__()
         check(
             hidden_size % num_heads == 0,
@@ -86,8 +108,11 @@ class GroupedQueryAttention(nn.Module):
         self.out_proj = nn.Linear(
             self.head_dim * self.num_heads, self.hidden_size, bias=False
         )
+        self.rotary_emb = RotaryEmbedding(self.head_dim, max_seq=max_seq, theta=theta)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, position_ids: torch.Tensor | None = None
+    ) -> torch.Tensor:
         B, S, D = x.shape
 
         # [B, S, D] -> [B, S, H * D_h]
@@ -102,6 +127,10 @@ class GroupedQueryAttention(nn.Module):
         # [B, S, H_kv * D_h] -> [B, S, H_kv, D_h] -> [B, H_kv, S, D_h]
         k = k.view(B, S, self.num_kv_heads, self.head_dim).transpose(1, 2)
         v = v.view(B, S, self.num_kv_heads, self.head_dim).transpose(1, 2)
+
+        # Apply rotation embedding
+        cos, sin = self.rotary_emb(q, position_ids)
+        q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
         # [B, H_kv, S, D_h] -> [B, H, S, D_h]
         k = k.repeat_interleave(self.group_size, dim=1)
