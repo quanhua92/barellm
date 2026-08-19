@@ -6,16 +6,24 @@ import torch
 from barellm.engine.kv_cache_manager import KVCacheManager
 from barellm.engine.request import Request, RequestStatus
 from barellm.engine.scheduler import Scheduler
+from barellm.sampling.sampler import sample
 from barellm.sampling.stops import FINISH_ABORT, FINISH_LENGTH
 
 logger = logging.getLogger(__name__)
 
 
 class Engine:
-    def __init__(self, scheduler: Scheduler, kv_cache_manager: KVCacheManager):
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        scheduler: Scheduler,
+        kv_cache_manager: KVCacheManager,
+    ):
+        self.model = model
         self.scheduler = scheduler
         self.kv_cache_manager = kv_cache_manager
         self.step_count = 0
+        self.device = next(self.model.parameters()).device
 
     def _check_and_finish(self, req: Request):
         """Check stop conditions, fire callbacks."""
@@ -46,13 +54,65 @@ class Engine:
 
     def _prefill(self, req: Request):
         logger.debug("Prefill Request: %s", req.id)
-        # 0. logits = self.model(req.token_ids, kv_cache_manager)
-        # 1. next_token = sample(logits[:, -1, :], ...)
-        # 2. req.append(next_token)
-        # 3. _check_and_finish
+        if req.max_new_tokens <= 0:
+            req.finish_reason = FINISH_LENGTH
+            req.status = RequestStatus.FINISHED
+            if req.on_finish:
+                req.on_finish(FINISH_LENGTH, None)
+            return
+
+        req.token_ids = req.token_ids.to(self.device)
+        position_ids = torch.arange(
+            req.seq_len, dtype=torch.long, device=self.device
+        ).unsqueeze(0)  # [1, T]
+
+        logits = self.model(
+            req.token_ids,
+            position_ids=position_ids,
+            kv_cache=self.kv_cache_manager,
+            request_ids=[req.id],
+        )  # [1, T, vocab]
+
+        next_token = sample(
+            logits[:, -1, :], req.temperature, req.top_k, req.top_p
+        )  # [1, 1]
+        req.append(next_token)
+
+        self._check_and_finish(req)
 
     def _decode(self):
-        logger.debug("Decode")
+        logger.debug(
+            "Decode: running=%d, waiting=%d",
+            len(self.scheduler.running),
+            len(self.scheduler.waiting),
+        )
+
+        active = self.scheduler.running
+        if not active:
+            return
+
+        for req in active:
+            self.kv_cache_manager.allocate_request(req)
+
+        input_ids = torch.cat([req.token_ids[:, -1:] for req in active], dim=0)
+        position_ids = torch.tensor(
+            [[req.seq_len - 1] for req in active], dtype=torch.long, device=self.device
+        )
+        request_ids = [req.id for req in active]
+
+        logits = self.model(
+            input_ids,
+            position_ids=position_ids,
+            kv_cache=self.kv_cache_manager,
+            request_ids=request_ids,
+        )  # [B, T, vocab]
+
+        for i, req in enumerate(active):
+            token = sample(
+                logits[i : i + 1, -1, :], req.temperature, req.top_k, req.top_p
+            )  # [1, 1]
+            req.append(token)
+            self._check_and_finish(req)
 
     def _cleanup(self):
         logger.debug(
@@ -68,10 +128,11 @@ class Engine:
     def step(self):
         self.step_count += 1
         logger.debug(
-            "Step %s: running=%d, waiting=%d",
+            "Step %s: running=%d, waiting=%d - device=%s",
             self.step_count,
             len(self.scheduler.running),
             len(self.scheduler.waiting),
+            self.device,
         )
         # 0. Check for new requests and prefill sequentially
         for req in self.scheduler.get_candidates():
