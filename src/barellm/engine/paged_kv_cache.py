@@ -166,3 +166,7 @@ class PagedLayerKV:
             torch.stack(keys, dim=1).unsqueeze(0),
             torch.stack(values, dim=1).unsqueeze(0),
         )
+
+    def attention_mask(self, q_len: int) -> torch.Tensor | None:
+        del q_len
+        return None

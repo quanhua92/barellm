@@ -49,6 +49,10 @@ class ContiguousLayerKV:
             raise RuntimeError("KV cache is empty")
         return self.key, self.value
 
+    def attention_mask(self, q_len: int) -> torch.Tensor | None:
+        del q_len
+        return None
+
 
 class ContiguousKVCache:
     def __init__(self, num_layers: int) -> None:

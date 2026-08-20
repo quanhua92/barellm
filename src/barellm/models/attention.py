@@ -67,13 +67,20 @@ class CausalSelfAttention(nn.Module):
         q = apply_rope(q, cos, sin)
         k = apply_rope(k, cos, sin)
 
+        layer_cache = None
         if kv_cache is not None:
             layer_cache = kv_cache.layer(layer_idx)
             k, v = layer_cache.append(k, v)
 
         q_len = q.shape[2]
-        is_causal = q_len > 1
-        context = F.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
+        attn_mask = None if layer_cache is None else layer_cache.attention_mask(q_len)
+        context = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=attn_mask,
+            is_causal=attn_mask is None and q_len > 1,
+        )
 
         # [B, H, T, D_h] -> [B, T, D]
         context = context.transpose(1, 2).reshape(B, T, -1)
@@ -150,6 +157,7 @@ class GroupedQueryAttention(nn.Module):
         q = apply_rope(q, cos, sin)
         k = apply_rope(k, cos, sin)
 
+        layer_cache = None
         if kv_cache is not None:
             layer_cache = kv_cache.layer(layer_idx)
             k, v = layer_cache.append(k, v)
@@ -159,8 +167,14 @@ class GroupedQueryAttention(nn.Module):
         v = v.repeat_interleave(self.group_size, dim=1)
 
         q_len = q.shape[2]
-        is_causal = q_len > 1
-        context = F.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
+        attn_mask = None if layer_cache is None else layer_cache.attention_mask(q_len)
+        context = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=attn_mask,
+            is_causal=attn_mask is None and q_len > 1,
+        )
 
         # [B, H, T, D_h] -> [B, T, D]
         context = context.transpose(1, 2).reshape(B, T, -1)
