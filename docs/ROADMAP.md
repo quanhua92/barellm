@@ -10,61 +10,60 @@ BareLLM is an understanding-first inference engine. Each milestone should be imp
 - [x] Physical KV-cache block pool
 - [x] KV-cache admission and block ownership bookkeeping
 - [x] Engine prefill/decode orchestration skeleton
-- [ ] Replace placeholder engine tests with behavioral assertions
+- [x] Replace placeholder engine tests with behavioral assertions
 
 ## Level 0 — Transformer primitives
 
-- [ ] Add `barellm.models`
-- [ ] Implement token embeddings and tied LM head
-- [ ] Implement RMSNorm
-- [ ] Implement rotary positional embeddings
-- [ ] Implement SwiGLU MLP
-- [ ] Add shape, dtype, numerical-stability, and parameter-validation tests
+- [x] Add `barellm.models`
+- [x] Implement token embeddings and tied LM head
+- [x] Implement RMSNorm
+- [x] Implement rotary positional embeddings
+- [x] Implement SwiGLU MLP
+- [x] Add shape, dtype, numerical-stability, and parameter-validation tests
 
 ## Level 1 — Attention and decoder model
 
-- [ ] Implement causal multi-head attention using PyTorch SDPA
-- [ ] Implement grouped-query attention
-- [ ] Support MQA through `num_kv_heads=1`
-- [ ] Verify MHA/GQA equivalence when query and KV head counts match
-- [ ] Implement transformer blocks with pre-normalization and residuals
-- [ ] Implement a generic decoder-only causal language model
-- [ ] Add final RMSNorm and LM head
-- [ ] Verify causal masking and full-sequence logits
+- [x] Implement causal multi-head attention using PyTorch SDPA
+- [x] Implement grouped-query attention
+- [x] Support MQA through `num_kv_heads=1`
+- [x] Verify MHA/GQA equivalence when query and KV head counts match
+- [x] Implement transformer blocks with pre-normalization and residuals
+- [x] Implement a generic decoder-only causal language model
+- [x] Add final RMSNorm and LM head
+- [x] Verify causal masking and full-sequence logits
 
 ## Level 2 — Model configuration and weights
 
-- [ ] Add device and dtype configuration
-- [ ] Add HuggingFace snapshot download and local cache management
-- [ ] Parse and validate model configuration
-- [ ] Implement safetensors shard loading
-- [ ] Implement checkpoint key mapping
-- [ ] Strictly validate missing and unexpected parameters
-- [ ] Load a small Qwen3-compatible model
-- [ ] Add model-loading and finite-output tests
+- [x] Add device and dtype configuration
+- [x] Add HuggingFace snapshot download and local cache management
+- [x] Parse and validate model configuration
+- [x] Implement safetensors shard loading
+- [x] Implement checkpoint key mapping
+- [x] Strictly validate missing and unexpected parameters
+- [x] Load a small Qwen3-compatible model
+- [x] Add model-loading and finite-output tests
 
 ## Level 3 — KV-cache correctness
 
-- [ ] Define the cache interface between attention and storage
-- [ ] Implement contiguous single-request KV caching as a reference
-- [ ] Implement prompt prefill cache writes
-- [ ] Implement one-token decode cache updates
-- [ ] Track per-request logical sequence positions
-- [ ] Verify cached decode against full recomputation
+- [x] Define the cache interface between attention and storage
+- [x] Implement contiguous single-request KV caching as a reference
+- [x] Implement prompt prefill cache writes
+- [x] Implement one-token decode cache updates
+- [x] Track per-request logical sequence positions
+- [x] Verify cached decode against full recomputation
 - [ ] Extend cache tests to MHA, GQA, and MQA layouts
 
 ## Level 4 — Paged KV cache
 
-- [ ] Implement `PagedKVCache` storage:
-  `[layers, physical_blocks, block_size, kv_heads, head_dim]`
-- [ ] Implement physical K/V writes and reads
-- [ ] Implement logical-position to physical-block translation
-- [ ] Implement block-table gathering
-- [ ] Complete `KVCacheManager.update_batch`
+- [x] Implement `PagedKVCache` storage:
+  `[layers, physical_blocks, kv_heads, block_size, head_dim]`
+- [x] Implement physical K/V writes and reads
+- [x] Implement logical-position to physical-block translation
+- [x] Implement block-table gathering
 - [ ] Support unequal sequence lengths with padding masks
-- [ ] Test multi-layer and multi-request cache behavior
+- [x] Test multi-layer and multi-request cache behavior
 - [ ] Test block exhaustion, freeing, and reuse
-- [ ] Integrate paged cache with attention
+- [x] Integrate paged cache with attention
 
 The first paged implementation may gather K/V into dense tensors before SDPA. Direct paged attention is a later optimization.
 
@@ -81,10 +80,10 @@ The first paged implementation may gather K/V into dense tensors before SDPA. Di
 
 ## Level 6 — User-facing tooling
 
-- [ ] Add direct-generation example
-- [ ] Add cached-generation example
+- [x] Add direct-generation example
+- [x] Add cached-generation example
 - [ ] Add batched-engine example
-- [ ] Add Qwen3 model-loading example
+- [x] Add Qwen3 model-loading example
 - [ ] Complete the CLI
 - [ ] Document ownership boundaries and tensor shapes
 - [ ] Document prefill versus decode

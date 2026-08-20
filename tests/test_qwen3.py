@@ -1,5 +1,9 @@
 import torch
 
+from barellm.engine.block_pool import BlockPool
+from barellm.engine.kv_cache_manager import KVCacheManager
+from barellm.engine.paged_kv_cache import PagedKVCache
+from barellm.engine.request import Request
 from barellm.models.attention import GroupedQueryAttention
 from barellm.models.qwen3 import Qwen3Config, Qwen3ForCausalLM, load_qwen3
 
@@ -109,6 +113,63 @@ def test_from_config_forward():
 
     assert logits.shape == (2, 8, 100)
     assert torch.isfinite(logits).all()
+
+
+def test_paged_cached_decode_matches_full_forward() -> None:
+    torch.manual_seed(0)
+    model = make_small_model().eval()
+    prompt = torch.randint(0, 100, (1, 4))
+    next_token = torch.randint(0, 100, (1, 1))
+
+    full_tokens = torch.cat([prompt, next_token], dim=1)
+    with torch.inference_mode():
+        full_logits = model(
+            full_tokens,
+            position_ids=torch.arange(5).unsqueeze(0),
+        )
+
+    block_size = 2
+    pool = BlockPool(max_blocks=8)
+    paged_cache = PagedKVCache(
+        num_layers=len(model.layers),
+        max_blocks=8,
+        num_kv_heads=2,
+        block_size=block_size,
+        head_dim=4,
+    )
+    manager = KVCacheManager(block_size, pool, paged_cache)
+    request = Request(
+        id="test",
+        token_ids=prompt,
+        max_new_tokens=1,
+    )
+    assert manager.allocate_request(request)
+    cache = manager.get_cache(request)
+
+    with torch.inference_mode():
+        model(
+            prompt,
+            position_ids=torch.arange(4).unsqueeze(0),
+            kv_cache=cache,
+        )
+
+    request.append(next_token)
+    assert manager.allocate_request(request)
+    cache = manager.get_cache(request)
+
+    with torch.inference_mode():
+        cached_logits = model(
+            next_token,
+            position_ids=torch.tensor([[4]]),
+            kv_cache=cache,
+        )
+
+    torch.testing.assert_close(
+        cached_logits[:, -1],
+        full_logits[:, -1],
+        atol=1e-5,
+        rtol=1e-5,
+    )
 
 
 def test_load_qwen3_connects_loading_pipeline(monkeypatch):
