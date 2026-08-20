@@ -3,6 +3,7 @@ import time
 
 import torch
 
+from barellm.engine.batched_kv_cache import BatchKVCache
 from barellm.engine.kv_cache_manager import KVCacheManager
 from barellm.engine.request import Request, RequestStatus
 from barellm.engine.scheduler import Scheduler
@@ -94,21 +95,32 @@ class Engine:
 
         for req in active:
             self.kv_cache_manager.allocate_request(req)
-            cache = self.kv_cache_manager.get_cache(req)
 
-            input_ids = req.token_ids[:, -1:]
-            position_ids = torch.tensor(
-                [[req.seq_len - 1]], dtype=torch.long, device=self.device
-            )
+        input_ids = torch.cat(
+            [req.token_ids[:, -1:] for req in active],
+            dim=0,
+        )
+        position_ids = torch.tensor(
+            [[req.seq_len - 1] for req in active],
+            dtype=torch.long,
+            device=self.device,
+        )
+        batch_cache = BatchKVCache(
+            [self.kv_cache_manager.get_cache(req) for req in active]
+        )
 
-            logits = self.model(
-                input_ids,
-                position_ids=position_ids,
-                kv_cache=cache,
-            )  # [B, T, vocab]
+        logits = self.model(
+            input_ids,
+            position_ids=position_ids,
+            kv_cache=batch_cache,
+        )  # [B, T, vocab]
 
+        for row, req in enumerate(active):
             token = sample(
-                logits[:, -1, :], req.temperature, req.top_k, req.top_p
+                logits[row : row + 1, -1, :],
+                req.temperature,
+                req.top_k,
+                req.top_p,
             )  # [1, 1]
             req.append(token)
             self._check_and_finish(req)
