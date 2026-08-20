@@ -106,9 +106,6 @@ def test_rejects_invalid_configuration():
     with pytest.raises(ValueError):
         make_attention(head_dim=3)
 
-    with pytest.raises(ValueError):
-        make_attention(hidden_size=16, head_dim=8, num_heads=3)
-
 
 def test_gradient_flows():
     attention = make_attention()

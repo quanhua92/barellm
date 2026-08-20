@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, fields
 import torch
 from torch import nn
 
+from barellm.config import MODEL_ID
 from barellm.hub import download_model
 from barellm.models.block import TransformerBlock
 from barellm.models.embedding import TiedLMHead, TokenEmbedding
@@ -55,7 +56,7 @@ def check_supported(cfg: Qwen3Config) -> None:
 
 
 def load_config(
-    model_id: str = "Qwen/Qwen3-0.6B",
+    model_id: str = MODEL_ID,
     warn_extras: bool = True,
 ) -> Qwen3Config:
 
@@ -144,7 +145,7 @@ class Qwen3ForCausalLM(nn.Module):
 
 
 def load_qwen3(
-    model_id: str = "Qwen/Qwen3-0.6B",
+    model_id: str = MODEL_ID,
     device: str = "cpu",
     dtype: torch.dtype = torch.float32,
 ) -> Qwen3ForCausalLM:

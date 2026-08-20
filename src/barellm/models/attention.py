@@ -21,10 +21,6 @@ class CausalSelfAttention(nn.Module):
         check(hidden_size > 0, "hidden_size must be positive")
         check(num_heads > 0, "num_heads must be positive")
         check(head_dim > 0 and head_dim % 2 == 0, "head_dim must be positive and even")
-        check(
-            hidden_size == head_dim * num_heads,
-            "hidden_size must equal head_dim * num_heads",
-        )
 
         self.hidden_size = hidden_size
         self.head_dim = head_dim
@@ -94,10 +90,6 @@ class GroupedQueryAttention(nn.Module):
         check(num_heads > 0, "num_heads must be positive")
         check(num_kv_heads > 0, "num_kv_heads must be positive")
         check(head_dim > 0 and head_dim % 2 == 0, "head_dim must be positive and even")
-        check(
-            hidden_size == head_dim * num_heads,
-            "hidden_size must equal head_dim * num_heads",
-        )
         check(
             num_heads % num_kv_heads == 0,
             "num_heads must divide evenly by num_kv_heads",
