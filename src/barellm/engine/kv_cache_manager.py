@@ -1,18 +1,37 @@
 from collections import defaultdict
 
 from barellm.engine.block_pool import BlockPool, KVCacheBlock
+from barellm.engine.contiguous_kv_cache import ContiguousKVCache
 from barellm.engine.paged_kv_cache import PagedKVCache
 from barellm.engine.request import Request
+from barellm.models.cache import KVCache
 
 
 class KVCacheManager:
     def __init__(
-        self, block_size: int, block_pool: BlockPool, paged_kv_cache: PagedKVCache
+        self,
+        block_size: int,
+        block_pool: BlockPool,
+        paged_kv_cache: PagedKVCache,
+        num_layers: int,
     ):
         self.block_size = block_size
         self.block_pool = block_pool
         self.paged_kv_cache = paged_kv_cache
+        self.num_layers = num_layers
+
         self.request_id_to_blocks: dict[str, list[KVCacheBlock]] = defaultdict(list)
+        self.request_id_to_cache: dict[str, KVCache] = {}
+
+    def get_cache(self, req: Request) -> KVCache:
+        request_id = req.id
+        if request_id not in self.request_id_to_blocks:
+            raise KeyError(f"Unknown request: {request_id}")
+        if request_id not in self.request_id_to_cache:
+            self.request_id_to_cache[request_id] = ContiguousKVCache(
+                num_layers=self.num_layers
+            )
+        return self.request_id_to_cache[request_id]
 
     def allocate_request(self, req: Request) -> bool:
         block_ids = self.request_id_to_blocks.get(req.id, [])
@@ -28,3 +47,4 @@ class KVCacheManager:
         blocks = self.request_id_to_blocks.pop(request_id, None)
         if blocks is not None:
             self.block_pool.free(blocks)
+        self.request_id_to_cache.pop(request_id, None)

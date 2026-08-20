@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from barellm.models.cache import KVCache
 from barellm.models.norm import RMSNorm
 from barellm.models.rope import RotaryEmbedding, apply_rope
 from barellm.utils import check
@@ -41,6 +42,8 @@ class CausalSelfAttention(nn.Module):
         self,
         x: torch.Tensor,
         position_ids: torch.Tensor | None = None,
+        layer_idx: int = 0,
+        kv_cache: KVCache | None = None,
     ) -> torch.Tensor:
         B, T, _D = x.shape
 
@@ -63,6 +66,10 @@ class CausalSelfAttention(nn.Module):
         cos, sin = self.rotary_emb(q, position_ids)
         q = apply_rope(q, cos, sin)
         k = apply_rope(k, cos, sin)
+
+        if kv_cache is not None:
+            layer_cache = kv_cache.layer(layer_idx)
+            k, v = layer_cache.append(k, v)
 
         q_len = q.shape[2]
         is_causal = q_len > 1
@@ -116,6 +123,8 @@ class GroupedQueryAttention(nn.Module):
         self,
         x: torch.Tensor,
         position_ids: torch.Tensor | None = None,
+        layer_idx: int = 0,
+        kv_cache: KVCache | None = None,
     ) -> torch.Tensor:
         B, T, _D = x.shape
 
@@ -140,6 +149,10 @@ class GroupedQueryAttention(nn.Module):
         cos, sin = self.rotary_emb(q, position_ids)
         q = apply_rope(q, cos, sin)
         k = apply_rope(k, cos, sin)
+
+        if kv_cache is not None:
+            layer_cache = kv_cache.layer(layer_idx)
+            k, v = layer_cache.append(k, v)
 
         # [B, H_kv, T, D_h] -> [B, H, T, D_h]
         k = k.repeat_interleave(self.group_size, dim=1)

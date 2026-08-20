@@ -40,7 +40,9 @@ class TestEngine:
         block_pool = BlockPool(128)
         block_size = 16
         paged_kv_cache = PagedKVCache()
-        kv_cache_manager = KVCacheManager(block_size, block_pool, paged_kv_cache)
+        kv_cache_manager = KVCacheManager(
+            block_size, block_pool, paged_kv_cache, num_layers=0
+        )
         model = TinyEngineModel()
         engine = Engine(model, scheduler, kv_cache_manager)
         engine.run(max_steps=10)

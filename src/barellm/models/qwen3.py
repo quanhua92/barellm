@@ -7,6 +7,7 @@ from torch import nn
 from barellm.config import MODEL_ID
 from barellm.hub import download_model
 from barellm.models.block import TransformerBlock
+from barellm.models.cache import KVCache
 from barellm.models.embedding import TiedLMHead, TokenEmbedding
 from barellm.models.norm import RMSNorm
 from barellm.models.weights import load_into_model, load_weights
@@ -131,12 +132,17 @@ class Qwen3ForCausalLM(nn.Module):
         )
 
     def forward(
-        self, token_ids: torch.Tensor, position_ids: torch.Tensor | None = None
+        self,
+        token_ids: torch.Tensor,
+        position_ids: torch.Tensor | None = None,
+        kv_cache: KVCache | None = None,
     ) -> torch.Tensor:
         # [B, T] -> [B, T, D]
         h = self.embed_tokens(token_ids)
-        for _layer_idx, layer in enumerate(self.layers):
-            h = layer(h, position_ids=position_ids)
+        for layer_idx, layer in enumerate(self.layers):
+            h = layer(
+                h, layer_idx=layer_idx, position_ids=position_ids, kv_cache=kv_cache
+            )
         # [B, T, D]
         h = self.norm(h)
 

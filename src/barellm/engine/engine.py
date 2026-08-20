@@ -66,11 +66,12 @@ class Engine:
             req.seq_len, dtype=torch.long, device=self.device
         ).unsqueeze(0)  # [1, T]
 
+        cache = self.kv_cache_manager.get_cache(req)
+
         logits = self.model(
             req.token_ids,
             position_ids=position_ids,
-            kv_cache=self.kv_cache_manager,
-            request_ids=[req.id],
+            kv_cache=cache,
         )  # [1, T, vocab]
 
         next_token = sample(
@@ -93,23 +94,21 @@ class Engine:
 
         for req in active:
             self.kv_cache_manager.allocate_request(req)
+            cache = self.kv_cache_manager.get_cache(req)
 
-        input_ids = torch.cat([req.token_ids[:, -1:] for req in active], dim=0)
-        position_ids = torch.tensor(
-            [[req.seq_len - 1] for req in active], dtype=torch.long, device=self.device
-        )
-        request_ids = [req.id for req in active]
+            input_ids = req.token_ids[:, -1:]
+            position_ids = torch.tensor(
+                [[req.seq_len - 1]], dtype=torch.long, device=self.device
+            )
 
-        logits = self.model(
-            input_ids,
-            position_ids=position_ids,
-            kv_cache=self.kv_cache_manager,
-            request_ids=request_ids,
-        )  # [B, T, vocab]
+            logits = self.model(
+                input_ids,
+                position_ids=position_ids,
+                kv_cache=cache,
+            )  # [B, T, vocab]
 
-        for i, req in enumerate(active):
             token = sample(
-                logits[i : i + 1, -1, :], req.temperature, req.top_k, req.top_p
+                logits[:, -1, :], req.temperature, req.top_k, req.top_p
             )  # [1, 1]
             req.append(token)
             self._check_and_finish(req)

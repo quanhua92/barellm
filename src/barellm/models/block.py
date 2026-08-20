@@ -2,6 +2,7 @@ import torch
 from torch import nn
 
 from barellm.models.attention import CausalSelfAttention, GroupedQueryAttention
+from barellm.models.cache import KVCache
 from barellm.models.mlp import SwiGLU
 from barellm.models.norm import RMSNorm
 from barellm.utils import check
@@ -50,12 +51,18 @@ class TransformerBlock(nn.Module):
         self.mlp = SwiGLU(hidden_size=hidden_size, intermediate_size=intermediate_size)
 
     def forward(
-        self, x: torch.Tensor, position_ids: torch.Tensor | None = None
+        self,
+        x: torch.Tensor,
+        position_ids: torch.Tensor | None = None,
+        layer_idx: int = 0,
+        kv_cache: KVCache | None = None,
     ) -> torch.Tensor:
         residual = x
 
         x = self.input_layernorm(x)
-        x = self.self_attn(x, position_ids=position_ids)
+        x = self.self_attn(
+            x, layer_idx=layer_idx, position_ids=position_ids, kv_cache=kv_cache
+        )
         x = residual + x
 
         residual = x
