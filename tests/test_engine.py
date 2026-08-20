@@ -7,6 +7,7 @@ from barellm.engine.kv_cache_manager import KVCacheManager
 from barellm.engine.paged_kv_cache import PagedKVCache
 from barellm.engine.request import Request
 from barellm.engine.scheduler import Scheduler
+from barellm.models.qwen3 import Qwen3ForCausalLM
 
 
 class TinyEngineModel(nn.Module):
@@ -58,3 +59,55 @@ class TestEngine:
         assert request.generated_count == 2
         assert request.finish_reason == "length"
         assert request.id not in kv_cache_manager.request_id_to_blocks
+
+    def test_batches_requests_with_different_prompt_lengths(self):
+        model = Qwen3ForCausalLM(
+            vocab_size=64,
+            hidden_size=16,
+            intermediate_size=32,
+            head_dim=4,
+            num_layers=2,
+            num_heads=4,
+            num_kv_heads=2,
+            use_qk_norm=True,
+        )
+        scheduler = Scheduler(max_batch=2)
+        requests = [
+            Request(
+                id="short",
+                token_ids=torch.tensor([[1, 2]]),
+                max_new_tokens=2,
+                temperature=0.0,
+            ),
+            Request(
+                id="long",
+                token_ids=torch.tensor([[1, 2, 3, 4]]),
+                max_new_tokens=2,
+                temperature=0.0,
+            ),
+        ]
+        for request in requests:
+            scheduler.add_request(request)
+
+        block_size = 2
+        pool = BlockPool(16)
+        paged_kv_cache = PagedKVCache(
+            num_layers=2,
+            max_blocks=16,
+            num_kv_heads=2,
+            block_size=block_size,
+            head_dim=4,
+        )
+        kv_cache_manager = KVCacheManager(
+            block_size,
+            pool,
+            paged_kv_cache,
+        )
+        engine = Engine(model, scheduler, kv_cache_manager)
+
+        engine.run(max_steps=2)
+
+        for request in requests:
+            assert request.generated_count == 2
+            assert request.finish_reason == "length"
+            assert request.id not in kv_cache_manager.request_id_to_blocks
