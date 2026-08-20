@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from barellm.models.attention import CausalSelfAttention
+from barellm.models.attention import CausalSelfAttention, GroupedQueryAttention
 from barellm.models.mlp import SwiGLU
 from barellm.models.norm import RMSNorm
 from barellm.utils import check
@@ -14,6 +14,7 @@ class TransformerBlock(nn.Module):
         head_dim: int,
         num_heads: int,
         intermediate_size: int,
+        num_kv_heads: int | None = None,
         rms_norm_eps: float = 1e-6,
         rope_theta: float = 1_000_000.0,
         use_qk_norm: bool = False,
@@ -26,14 +27,25 @@ class TransformerBlock(nn.Module):
 
         self.input_layernorm = RMSNorm(hidden_size, eps=rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(hidden_size, eps=rms_norm_eps)
-        self.self_attn = CausalSelfAttention(
-            hidden_size=hidden_size,
-            head_dim=head_dim,
-            num_heads=num_heads,
-            rope_theta=rope_theta,
-            use_qk_norm=use_qk_norm,
-            rms_norm_eps=rms_norm_eps,
-        )
+        if num_kv_heads is not None:
+            self.self_attn = GroupedQueryAttention(
+                hidden_size=hidden_size,
+                head_dim=head_dim,
+                num_heads=num_heads,
+                num_kv_heads=num_kv_heads,
+                rope_theta=rope_theta,
+                use_qk_norm=use_qk_norm,
+                rms_norm_eps=rms_norm_eps,
+            )
+        else:
+            self.self_attn = CausalSelfAttention(
+                hidden_size=hidden_size,
+                head_dim=head_dim,
+                num_heads=num_heads,
+                rope_theta=rope_theta,
+                use_qk_norm=use_qk_norm,
+                rms_norm_eps=rms_norm_eps,
+            )
 
         self.mlp = SwiGLU(hidden_size=hidden_size, intermediate_size=intermediate_size)
 
