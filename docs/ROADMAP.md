@@ -60,7 +60,7 @@ BareLLM is an understanding-first inference engine. Each milestone should be imp
 - [x] Implement physical K/V writes and reads
 - [x] Implement logical-position to physical-block translation
 - [x] Implement block-table gathering
-- [ ] Support unequal sequence lengths with padding masks
+- [x] Support unequal sequence lengths with padding masks
 - [x] Test multi-layer and multi-request cache behavior
 - [ ] Test block exhaustion, freeing, and reuse
 - [x] Integrate paged cache with attention
@@ -71,24 +71,24 @@ The first paged implementation may gather K/V into dense tensors before SDPA. Di
 
 - [ ] Add a single-request `generate` convenience API
 - [ ] Support cached and no-cache generation paths
-- [ ] Complete batched decode with per-request positions
+- [x] Complete batched decode with per-request positions
 - [ ] Enforce maximum batch size and KV capacity during admission
 - [ ] Free blocks when requests finish
-- [ ] Test mixed prompt lengths and generation limits
+- [x] Test mixed prompt lengths and generation limits
 - [ ] Test callbacks, aborts, EOS, stop strings, deadlines, and zero-token requests
 - [ ] Add end-to-end prompt-to-token tests
 
 ## Level 6 — User-facing tooling
 
-- [x] Add direct-generation example
+- [ ] Add direct-generation example
 - [x] Add cached-generation example
 - [ ] Add batched-engine example
 - [x] Add Qwen3 model-loading example
 - [ ] Complete the CLI
-- [ ] Document ownership boundaries and tensor shapes
-- [ ] Document prefill versus decode
-- [ ] Document contiguous versus paged caching
-- [ ] Keep README and roadmap synchronized with the implementation
+- [x] Document ownership boundaries and tensor shapes
+- [x] Document prefill versus decode
+- [x] Document contiguous versus paged caching
+- [x] Keep README and roadmap synchronized with the implementation
 
 ## Performance
 

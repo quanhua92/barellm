@@ -23,18 +23,47 @@ git config core.hooksPath githooks
 - **examples/** - runnable demos (load model, generate text)
 - **tests/** - pytest suite
 
+## Current status
+
+BareLLM can load a Qwen3-compatible checkpoint and generate text using:
+
+- Qwen3 embeddings, RMSNorm, RoPE, SwiGLU, GQA, and tied LM head;
+- contiguous KV cache as a reference implementation;
+- paged KV cache with fixed-size physical blocks;
+- one-token batched decode with unequal request lengths and padding masks.
+
+The current paged backend gathers pages into dense tensors before PyTorch SDPA. Direct paged attention is a future optimization.
+
+## Run the demos
+
+Load Qwen3 and benchmark a prefill pass:
+
+```bash
+uv run python examples/load_qwen3.py --seq-len 128 --runs 3
+```
+
+Generate text with the paged KV cache:
+
+```bash
+uv run python examples/generate_demo.py
+uv run python examples/generate_demo.py "Say hello world"
+```
+
+The shared device configuration selects CUDA, MPS, or CPU automatically.
+
 ## Ownership
 
 - **Scheduler** - owns: request queue | give: resources -> return: who runs
-- **KVCacheManager** - owns: block tables + KV storage
-  - **BlockPool** - owns: block IDs | give: count -> return: blocks
-  - **PagedKVCache** - owns: K/V tensors | give: block -> return: K/V
-- **Attention** - owns: attention math | give: hidden -> return: context
+- **KVCacheManager** - owns: request cache lifecycle and block tables
+  - **BlockPool** - owns: physical block IDs | give: count -> return: blocks
+  - **PagedKVCache** - owns: physical K/V tensors and logical-to-physical writes
+- **KVCache view** - model-facing interface for one request or a batch
+- **Attention** - owns: attention math | give: hidden + cache view -> return: context
 
 ## Scheduler
 
 - Manages request lifecycle: waiting -> running -> finished
-- Checks `KVCacheManager.can_allocate()` before admitting new requests
+- Checks physical capacity through `BlockPool.can_allocate()` before admitting new requests
 - Frees blocks when requests finish (EOS, max tokens)
 
 ## KV Cache
@@ -42,10 +71,22 @@ git config core.hooksPath githooks
 - Fixed-size blocks (e.g., 16 tokens) scattered across GPU memory
 - Each request has a block table mapping logical positions -> physical blocks
 - No pre-allocation per request - blocks allocated on demand, freed on finish
-- **KVCacheManager** - single interface for both scheduler (allocate/free) and attention (update K/V)
-  - **BlockPool** - owns all physical block IDs, tracks free capacity
-  - **PagedKVCache** - the actual `[L, P, S, H, D]` K/V tensors on GPU
+- **KVCacheManager** - allocates and releases request cache state
+  - **BlockPool** - owns all physical block IDs and tracks free capacity
+  - **PagedKVCache** - the actual `[layers, physical_blocks, kv_heads, block_size, head_dim]` K/V tensors
+  - **BatchKVCache** - routes each batch row to its request cache and pads unequal histories
 
 ```
 position -> logical block (pos // block_size) -> block_table -> physical block -> K/V
 ```
+
+## Development
+
+Run the full checks:
+
+```bash
+uv run pytest
+uv run pyright src tests
+```
+
+The implementation roadmap is in [`docs/ROADMAP.md`](docs/ROADMAP.md).
