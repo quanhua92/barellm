@@ -39,9 +39,17 @@ class TestEngine:
         scheduler.add_request(request)
         block_pool = BlockPool(128)
         block_size = 16
-        paged_kv_cache = PagedKVCache()
+        paged_kv_cache = PagedKVCache(
+            num_layers=1,
+            max_blocks=128,
+            num_kv_heads=1,
+            block_size=block_size,
+            head_dim=1,
+        )
         kv_cache_manager = KVCacheManager(
-            block_size, block_pool, paged_kv_cache, num_layers=0
+            block_size,
+            block_pool,
+            paged_kv_cache,
         )
         model = TinyEngineModel()
         engine = Engine(model, scheduler, kv_cache_manager)
