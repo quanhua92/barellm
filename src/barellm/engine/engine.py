@@ -125,7 +125,7 @@ class Engine:
             if self.kv_cache_manager is not None:
                 self.kv_cache_manager.free_request(req.id)
 
-    def step(self):
+    def step(self) -> None:
         self.step_count += 1
         logger.debug(
             "Step %s: running=%d, waiting=%d - device=%s",
@@ -146,7 +146,11 @@ class Engine:
         # 2. Clean up finished requests
         self._cleanup()
 
-    def run(self, max_steps: int | None = None, timeout: float | None = None):
+    def run(
+        self,
+        max_steps: int | None = None,
+        timeout: float | None = None,
+    ) -> None:
         start_time = time.time()
         step = 0
         while self.scheduler.has_work():

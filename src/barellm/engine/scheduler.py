@@ -13,7 +13,7 @@ class Scheduler:
     def has_work(self) -> bool:
         return bool(self.waiting or self.running)
 
-    def get_candidates(self):
+    def get_candidates(self) -> list[Request]:
         slots = max(0, self.max_batch - len(self.running))
         return list(self.waiting)[:slots]
 
@@ -23,10 +23,10 @@ class Scheduler:
         self.waiting.remove(request)
         return request
 
-    def add_request(self, request: Request):
+    def add_request(self, request: Request) -> None:
         self.waiting.append(request)
 
-    def start_request(self, request: Request):
+    def start_request(self, request: Request) -> None:
         if request.status == RequestStatus.FINISHED:
             self.finished.append(request)
         else:

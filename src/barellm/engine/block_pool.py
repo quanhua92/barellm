@@ -23,6 +23,6 @@ class BlockPool:
             result.append(self.blocks[block_id])
         return result
 
-    def free(self, blocks: list[KVCacheBlock]):
+    def free(self, blocks: list[KVCacheBlock]) -> None:
         for block in blocks:
             self.free_ids.append(block.block_id)

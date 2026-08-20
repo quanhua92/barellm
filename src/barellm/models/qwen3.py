@@ -8,6 +8,7 @@ from barellm.hub import download_model
 from barellm.models.block import TransformerBlock
 from barellm.models.embedding import TiedLMHead, TokenEmbedding
 from barellm.models.norm import RMSNorm
+from barellm.models.weights import load_into_model, load_weights
 from barellm.utils import check
 
 
@@ -46,14 +47,17 @@ KNOWN_EXTRAS: dict[str, str] = {
 }
 
 
-def check_supported(cfg: Qwen3Config):
+def check_supported(cfg: Qwen3Config) -> None:
     check(cfg.hidden_act == "silu", f"unsupported {cfg.hidden_act}")
     check(cfg.attention_bias is False, "attention_bias not supported")
     check(cfg.attention_dropout == 0.0, "attention_dropout must be 0.0")
     check(cfg.use_sliding_window is False, "sliding window not supported")
 
 
-def load_config(model_id: str = "Qwen/Qwen3-0.6B", warn_extras=True) -> Qwen3Config:
+def load_config(
+    model_id: str = "Qwen/Qwen3-0.6B",
+    warn_extras: bool = True,
+) -> Qwen3Config:
 
     snapshot_dir = download_model(model_id)
     with open(snapshot_dir / "config.json") as f:
@@ -137,3 +141,22 @@ class Qwen3ForCausalLM(nn.Module):
 
         # [B, T, D] -> [B, T, vocab]
         return self.lm_head(h)
+
+
+def load_qwen3(
+    model_id: str = "Qwen/Qwen3-0.6B",
+    device: str = "cpu",
+    dtype: torch.dtype = torch.float32,
+) -> Qwen3ForCausalLM:
+    config = load_config(model_id)
+    model = Qwen3ForCausalLM.from_config(config)
+    model.to(device=device, dtype=dtype)
+
+    weights = load_weights(
+        model_id=model_id,
+        device=device,
+        dtype=dtype,
+    )
+    load_into_model(model, weights, dtype=dtype)
+
+    return model.eval()

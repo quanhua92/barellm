@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import torch
 from safetensors import safe_open
 from torch import nn
@@ -37,7 +39,7 @@ def load_into_model(
     model: nn.Module,
     weights: dict[str, torch.Tensor],
     dtype: torch.dtype | None = None,
-    map_key=default_map_key,
+    map_key: Callable[[str], str] = default_map_key,
 ) -> None:
     """Load HF checkpoint weights into model.
 
