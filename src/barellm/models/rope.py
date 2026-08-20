@@ -5,6 +5,8 @@ from barellm.utils import check
 
 
 class RotaryEmbedding(nn.Module):
+    inv_freq: torch.Tensor
+
     def __init__(self, head_dim: int, theta: float = 1_000_000):
         super().__init__()
 
@@ -30,7 +32,10 @@ class RotaryEmbedding(nn.Module):
         if position_ids is None:
             position_ids = torch.arange(T, device=x.device).unsqueeze(0).expand(B, -1)
 
-        positions = position_ids.to(device=x.device, dtype=self.inv_freq.dtype)
+        positions = position_ids.to(
+            device=x.device,
+            dtype=self.inv_freq.dtype,
+        )
 
         # [B, T, 1] * [D_h/2] -> [B, T, D_h/2]
         angles = positions[..., None] * self.inv_freq
