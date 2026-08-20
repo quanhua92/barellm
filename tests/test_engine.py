@@ -17,6 +17,7 @@ class TinyEngineModel(nn.Module):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, hidden_size)
         self.lm_head = nn.Linear(hidden_size, vocab_size)
+        self.forward_calls = 0
 
     def forward(
         self,
@@ -25,6 +26,7 @@ class TinyEngineModel(nn.Module):
         kv_cache=None,
         request_ids: list[str] | None = None,
     ) -> torch.Tensor:
+        self.forward_calls += 1
         del position_ids, kv_cache, request_ids
         return self.lm_head(self.embedding(token_ids))
 
@@ -111,3 +113,38 @@ class TestEngine:
             assert request.generated_count == 2
             assert request.finish_reason == "length"
             assert request.id not in kv_cache_manager.request_id_to_blocks
+
+    def test_decode_skips_request_when_no_block_is_available(self):
+        model = TinyEngineModel()
+        scheduler = Scheduler(max_batch=1)
+        request = Request(
+            id="blocked",
+            token_ids=torch.tensor([[20, 30]]),
+            max_new_tokens=2,
+        )
+        scheduler.add_request(request)
+        block_size = 2
+        block_pool = BlockPool(1)
+        paged_kv_cache = PagedKVCache(
+            num_layers=1,
+            max_blocks=1,
+            num_kv_heads=1,
+            block_size=block_size,
+            head_dim=1,
+        )
+        kv_cache_manager = KVCacheManager(
+            block_size,
+            block_pool,
+            paged_kv_cache,
+        )
+        assert kv_cache_manager.allocate_request(request)
+        request.append(torch.tensor([[40]]))
+        scheduler.pop_request(request)
+        scheduler.start_request(request)
+        engine = Engine(model, scheduler, kv_cache_manager)
+
+        engine._decode()
+
+        assert request.generated_count == 1
+        assert model.forward_calls == 0
+        assert request.status.value == "running"

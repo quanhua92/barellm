@@ -93,8 +93,15 @@ class Engine:
         if not active:
             return
 
+        decodable = []
         for req in active:
-            self.kv_cache_manager.allocate_request(req)
+            if self.kv_cache_manager.allocate_request(req):
+                decodable.append(req)
+
+        if not decodable:
+            return
+
+        active = decodable
 
         input_ids = torch.cat(
             [req.token_ids[:, -1:] for req in active],
