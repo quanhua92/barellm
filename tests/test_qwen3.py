@@ -1,7 +1,7 @@
 import torch
 
 from barellm.models.attention import GroupedQueryAttention
-from barellm.models.qwen3 import Qwen3Config, Qwen3ForCausalLM
+from barellm.models.qwen3 import Qwen3Config, Qwen3ForCausalLM, load_qwen3
 
 
 def make_small_model() -> Qwen3ForCausalLM:
@@ -92,11 +92,13 @@ def test_supports_explicit_positions():
 def test_from_config_wires_model_dimensions():
     config = make_config()
     model = Qwen3ForCausalLM.from_config(config)
+    attention = model.layers[0].self_attn
 
     assert len(model.layers) == config.num_hidden_layers
-    assert model.layers[0].self_attn.num_kv_heads == config.num_key_value_heads
-    assert model.layers[0].self_attn.use_qk_norm is True
-    assert model.layers[0].self_attn.rotary_emb.theta == config.rope_theta
+    assert isinstance(attention, GroupedQueryAttention)
+    assert attention.num_kv_heads == config.num_key_value_heads
+    assert attention.use_qk_norm is True
+    assert attention.rotary_emb.theta == config.rope_theta
 
 
 def test_from_config_forward():
@@ -107,3 +109,39 @@ def test_from_config_forward():
 
     assert logits.shape == (2, 8, 100)
     assert torch.isfinite(logits).all()
+
+
+def test_load_qwen3_connects_loading_pipeline(monkeypatch):
+    config = make_config()
+    calls = {}
+
+    def fake_load_config(model_id):
+        calls["config"] = model_id
+        return config
+
+    def fake_load_weights(model_id, device, dtype):
+        calls["weights"] = (model_id, device, dtype)
+        return {}
+
+    def fake_load_into_model(model, weights, dtype):
+        calls["into_model"] = (model, weights, dtype)
+
+    monkeypatch.setattr("barellm.models.qwen3.load_config", fake_load_config)
+    monkeypatch.setattr("barellm.models.qwen3.load_weights", fake_load_weights)
+    monkeypatch.setattr(
+        "barellm.models.qwen3.load_into_model",
+        fake_load_into_model,
+    )
+
+    model = load_qwen3(
+        model_id="test/model",
+        device="cpu",
+        dtype=torch.float64,
+    )
+
+    assert isinstance(model, Qwen3ForCausalLM)
+    assert model.training is False
+    assert calls["config"] == "test/model"
+    assert calls["weights"] == ("test/model", "cpu", torch.float64)
+    assert calls["into_model"][1] == {}
+    assert calls["into_model"][2] == torch.float64

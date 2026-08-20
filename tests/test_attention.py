@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 import torch
 
@@ -5,7 +7,7 @@ from barellm.models.attention import CausalSelfAttention, GroupedQueryAttention
 
 
 def make_attention(**kwargs):
-    defaults = {
+    defaults: dict[str, Any] = {
         "hidden_size": 16,
         "head_dim": 4,
         "num_heads": 4,
@@ -15,7 +17,7 @@ def make_attention(**kwargs):
 
 
 def make_gqa(**kwargs):
-    defaults = {
+    defaults: dict[str, Any] = {
         "hidden_size": 16,
         "head_dim": 4,
         "num_heads": 4,

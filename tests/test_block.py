@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 import torch
 
@@ -5,7 +7,7 @@ from barellm.models.block import TransformerBlock
 
 
 def make_block(**kwargs):
-    defaults = {
+    defaults: dict[str, Any] = {
         "hidden_size": 16,
         "head_dim": 4,
         "num_heads": 4,
