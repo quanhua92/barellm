@@ -110,6 +110,21 @@ class Qwen3ForCausalLM(nn.Module):
         self.norm = RMSNorm(hidden_size, rms_norm_eps)
         self.lm_head = TiedLMHead(self.embed_tokens)
 
+    @classmethod
+    def from_config(cls, config: Qwen3Config) -> "Qwen3ForCausalLM":
+        return cls(
+            vocab_size=config.vocab_size,
+            hidden_size=config.hidden_size,
+            intermediate_size=config.intermediate_size,
+            head_dim=config.head_dim,
+            num_layers=config.num_hidden_layers,
+            num_heads=config.num_attention_heads,
+            num_kv_heads=config.num_key_value_heads,
+            rope_theta=config.rope_theta,
+            use_qk_norm=True,
+            rms_norm_eps=config.rms_norm_eps,
+        )
+
     def forward(
         self, token_ids: torch.Tensor, position_ids: torch.Tensor | None = None
     ) -> torch.Tensor:
