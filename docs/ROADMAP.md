@@ -102,6 +102,7 @@ reference path. The default remains paged cached generation.
 - [x] Add batched-engine example
 - [x] Add Qwen3 model-loading example
 - [x] Add basic `barellm generate` CLI
+- [x] Add exportable engine and PyTorch profiling traces
 - [x] Document ownership boundaries and tensor shapes
 - [x] Document prefill versus decode
 - [x] Document contiguous versus paged caching
@@ -109,6 +110,7 @@ reference path. The default remains paged cached generation.
 
 ## Performance
 
+- [x] Export engine event traces and generation metrics
 - [ ] Benchmark uncached versus cached decode
 - [ ] Benchmark dense gather from paged cache
 - [ ] Implement direct paged attention

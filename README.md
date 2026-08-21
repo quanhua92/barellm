@@ -43,6 +43,8 @@ The cache protocols, storage backends, block ownership, and request lifecycle
 are documented in [`docs/CACHE.md`](docs/CACHE.md).
 The engine event stream and generation timing metrics are documented in
 [`docs/EVENTS.md`](docs/EVENTS.md).
+Optional engine and PyTorch trace export is documented in
+[`docs/PROFILING.md`](docs/PROFILING.md).
 
 ## Run the demos
 
@@ -59,6 +61,7 @@ uv run python examples/generate_demo.py
 uv run python examples/generate_demo.py "Say hello world"
 uv run python examples/generate_demo.py --no-cache "Say hello world"
 uv run python examples/batch_demo.py
+uv run python examples/profile_demo.py "Explain paged KV caching."
 ```
 
 `generate_demo.py` uses the public `barellm.engine.generate()` API. The lower-
@@ -73,6 +76,19 @@ The shared device configuration selects CUDA, MPS, or CPU automatically.
 
 The default demo uses the paged KV cache. `--no-cache` recomputes the complete
 sequence at every decode step and is intended for correctness comparisons.
+
+Profiling is opt-in for the generation demos and CLI:
+
+```bash
+uv run python examples/generate_demo.py --profile "Say hello world"
+uv run python examples/engine_demo.py --profile "Say hello world"
+uv run barellm generate --profile --prompt "Say hello world"
+```
+
+`--profile` writes the lightweight engine trace and metrics JSON. Add
+`--torch-profile` when you explicitly need the much larger PyTorch operator
+trace. Each run writes to `profiles/<model>/<timestamp>-<device>/`. Use
+`--profile-dir` to choose an explicit output directory.
 
 The batch demo drives the lower-level engine with multiple requests:
 

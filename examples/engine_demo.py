@@ -4,14 +4,17 @@ Usage:
     uv run python examples/engine_demo.py
     uv run python examples/engine_demo.py "Say hello world"
     uv run python examples/engine_demo.py --no-cache "Say hello world"
+    uv run python examples/engine_demo.py --profile "Say hello world"
 """
 
 import argparse
 import time
+from pathlib import Path
 
 from transformers import AutoTokenizer
 
 from barellm.config import DEVICE, DTYPE, MODEL_ID
+from barellm.engine import TorchProfiler, TraceRecorder, profile_run_dir
 from barellm.engine.block_pool import BlockPool
 from barellm.engine.engine import Engine
 from barellm.engine.events import MetricsCollector
@@ -34,6 +37,21 @@ def main() -> None:
         action="store_true",
         help="use full-sequence recomputation as a correctness reference",
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="export lightweight engine and metrics profiles",
+    )
+    parser.add_argument(
+        "--torch-profile",
+        action="store_true",
+        help="also export the large PyTorch operator profile",
+    )
+    parser.add_argument(
+        "--profile-dir",
+        type=Path,
+        help="profile output directory; enables profiling",
+    )
     args = parser.parse_args()
 
     if args.max_new_tokens <= 0:
@@ -45,6 +63,17 @@ def main() -> None:
     print(f"\n  device:       {DEVICE}")
     print(f"  dtype:        {DTYPE}")
     print(f"  cache:        {'off' if args.no_cache else 'paged'}")
+    profiling = args.profile or args.profile_dir is not None or args.torch_profile
+    torch_profiling = args.torch_profile
+    profile_dir = args.profile_dir
+    if profiling and profile_dir is None:
+        profile_dir = profile_run_dir(
+            model_name=MODEL_ID,
+            device=DEVICE,
+        )
+    print(f"  profiling:    {'on' if profiling else 'off'}")
+    if profile_dir is not None:
+        print(f"  profile dir:  {profile_dir}")
     print(f"  prompt:       {args.prompt}")
 
     print("\n[1/4] Loading tokenizer...")
@@ -100,6 +129,7 @@ def main() -> None:
     print(f"\n[4/4] Generating (max {args.max_new_tokens} tokens)...")
     print("\n  output: ", end="", flush=True)
     events = []
+    recorder = TraceRecorder() if profiling else None
 
     def on_token(token_id: int, _count: int) -> bool:
         piece = tokenizer.decode([token_id], skip_special_tokens=True)
@@ -122,13 +152,41 @@ def main() -> None:
     scheduler = Scheduler(max_batch=1)
     scheduler.add_request(request)
     engine = Engine(model, scheduler, cache_manager)
-    engine.run(use_cache=not args.no_cache, on_event=events.append)
+    event_sink = recorder if recorder is not None else events.append
+    if torch_profiling:
+        assert profile_dir is not None
+        with TorchProfiler(profile_dir / "torch.trace.json"):
+            engine.run(use_cache=not args.no_cache, on_event=event_sink)
+    else:
+        engine.run(use_cache=not args.no_cache, on_event=event_sink)
+
+    if profiling:
+        assert recorder is not None
+        assert profile_dir is not None
+        events = recorder.events
+        metadata = {
+            "model": MODEL_ID,
+            "device": DEVICE,
+            "dtype": str(DTYPE),
+            "use_cache": not args.no_cache,
+            "prompt": args.prompt,
+        }
+        recorder.export_chrome_trace(
+            profile_dir / "engine.trace.json",
+            metadata=metadata,
+        )
 
     metrics_collector = MetricsCollector(request.id)
     for event in events:
         metrics_collector.on_event(event)
     metrics = metrics_collector.build(request.generated_count)
     generated = request.generated_count
+    if recorder is not None:
+        recorder.export_metrics(
+            profile_dir / "metrics.json",
+            metrics,
+            metadata=metadata,
+        )
 
     print("\n\n" + "-" * 60)
     print(f"  generated:    {generated} tokens")

@@ -158,6 +158,21 @@ class GenerationMetrics:
     decode_tokens_per_second: float
     inter_token_latency_seconds: tuple[float, ...]
 
+    def to_dict(self) -> dict[str, object]:
+        """Return a JSON-compatible metrics representation."""
+        return {
+            "prompt_tokens": self.prompt_tokens,
+            "generated_tokens": self.generated_tokens,
+            "total_seconds": self.total_seconds,
+            "prefill_seconds": self.prefill_seconds,
+            "prefill_tokens_per_second": self.prefill_tokens_per_second,
+            "time_to_first_token": self.time_to_first_token,
+            "decode_seconds": self.decode_seconds,
+            "decode_tokens_per_second": self.decode_tokens_per_second,
+            "inter_token_latency_seconds": self.inter_token_latency_seconds,
+            "average_inter_token_latency": self.average_inter_token_latency,
+        }
+
     @property
     def average_inter_token_latency(self) -> float | None:
         if not self.inter_token_latency_seconds:

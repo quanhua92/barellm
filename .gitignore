@@ -27,4 +27,5 @@ typings/
 
 # Project
 tmp/
+profiles/
 *.log

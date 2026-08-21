@@ -6,6 +6,7 @@ from barellm.engine.events import (
     TimingConfig,
 )
 from barellm.engine.generate import GenerationResult, generate
+from barellm.engine.profiling import TorchProfiler, TraceRecorder, profile_run_dir
 
 __all__ = [
     "EngineEvent",
@@ -14,5 +15,8 @@ __all__ = [
     "GenerationMetrics",
     "GenerationResult",
     "TimingConfig",
+    "TorchProfiler",
+    "TraceRecorder",
     "generate",
+    "profile_run_dir",
 ]

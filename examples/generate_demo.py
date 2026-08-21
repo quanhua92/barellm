@@ -4,15 +4,17 @@ Usage:
     uv run python examples/generate_demo.py
     uv run python examples/generate_demo.py "Say hello world"
     uv run python examples/generate_demo.py --no-cache "Say hello world"
+    uv run python examples/generate_demo.py --profile "Say hello world"
 """
 
 import argparse
 import time
+from pathlib import Path
 
 from transformers import AutoTokenizer
 
 from barellm.config import DEVICE, DTYPE, MODEL_ID
-from barellm.engine import generate
+from barellm.engine import TorchProfiler, TraceRecorder, generate, profile_run_dir
 from barellm.runtime import load_qwen3_engine
 
 
@@ -29,6 +31,21 @@ def main() -> None:
         action="store_true",
         help="use full-sequence recomputation as a correctness reference",
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="export lightweight engine and metrics profiles",
+    )
+    parser.add_argument(
+        "--torch-profile",
+        action="store_true",
+        help="also export the large PyTorch operator profile",
+    )
+    parser.add_argument(
+        "--profile-dir",
+        type=Path,
+        help="profile output directory; enables profiling",
+    )
     args = parser.parse_args()
 
     if args.max_new_tokens < 0:
@@ -40,6 +57,17 @@ def main() -> None:
     print(f"\n  device:       {DEVICE}")
     print(f"  dtype:        {DTYPE}")
     print(f"  cache:        {'off' if args.no_cache else 'paged'}")
+    profiling = args.profile or args.profile_dir is not None or args.torch_profile
+    torch_profiling = args.torch_profile
+    profile_dir = args.profile_dir
+    if profiling and profile_dir is None:
+        profile_dir = profile_run_dir(
+            model_name=MODEL_ID,
+            device=DEVICE,
+        )
+    print(f"  profiling:    {'on' if profiling else 'off'}")
+    if profile_dir is not None:
+        print(f"  profile dir:  {profile_dir}")
     print(f"  prompt:       {args.prompt}")
 
     print("\n[1/4] Loading tokenizer...")
@@ -82,16 +110,47 @@ def main() -> None:
     if tokenizer.eos_token_id is not None:
         eos_ids.add(tokenizer.eos_token_id)
 
-    result = generate(
-        engine,
-        token_ids,
-        max_new_tokens=args.max_new_tokens,
-        temperature=args.temperature,
-        top_p=args.top_p,
-        eos_ids=eos_ids,
-        on_token=on_token,
-        use_cache=not args.no_cache,
-    )
+    recorder = TraceRecorder() if profiling else None
+
+    def run_generation():
+        return generate(
+            engine,
+            token_ids,
+            max_new_tokens=args.max_new_tokens,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            eos_ids=eos_ids,
+            on_token=on_token,
+            on_event=recorder,
+            use_cache=not args.no_cache,
+        )
+
+    if torch_profiling:
+        assert profile_dir is not None
+        with TorchProfiler(profile_dir / "torch.trace.json"):
+            result = run_generation()
+    else:
+        result = run_generation()
+
+    if profiling:
+        assert recorder is not None
+        assert profile_dir is not None
+        metadata = {
+            "model": MODEL_ID,
+            "device": DEVICE,
+            "dtype": str(DTYPE),
+            "use_cache": not args.no_cache,
+            "prompt": args.prompt,
+        }
+        recorder.export_chrome_trace(
+            profile_dir / "engine.trace.json",
+            metadata=metadata,
+        )
+        recorder.export_metrics(
+            profile_dir / "metrics.json",
+            result.metrics,
+            metadata=metadata,
+        )
     metrics = result.metrics
 
     print("\n\n" + "-" * 60)

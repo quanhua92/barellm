@@ -1,9 +1,10 @@
 import argparse
+from pathlib import Path
 
 from transformers import AutoTokenizer
 
 from barellm.config import DEVICE, DTYPE, MODEL_ID
-from barellm.engine import generate
+from barellm.engine import TorchProfiler, TraceRecorder, generate, profile_run_dir
 from barellm.runtime import load_qwen3_engine
 
 
@@ -14,6 +15,17 @@ def _generate(args: argparse.Namespace) -> None:
         args.model,
         use_cache=not args.no_cache,
     )
+    profiling = args.profile or args.profile_dir is not None or args.torch_profile
+    torch_profiling = args.torch_profile
+    profile_dir = args.profile_dir
+    if profiling and profile_dir is None:
+        profile_dir = profile_run_dir(
+            model_name=args.model,
+            device=DEVICE,
+        )
+    print(f"profiling: {'on' if profiling else 'off'}")
+    if profile_dir is not None:
+        print(f"profile dir: {profile_dir}")
 
     messages = [{"role": "user", "content": args.prompt}]
     prompt_text = tokenizer.apply_chat_template(
@@ -34,17 +46,48 @@ def _generate(args: argparse.Namespace) -> None:
         )
         return True
 
-    result = generate(
-        engine,
-        token_ids,
-        max_new_tokens=args.max_new_tokens,
-        temperature=args.temperature,
-        top_k=args.top_k,
-        top_p=args.top_p,
-        eos_ids=eos_ids,
-        on_token=on_token,
-        use_cache=not args.no_cache,
-    )
+    recorder = TraceRecorder() if profiling else None
+
+    def run_generation():
+        return generate(
+            engine,
+            token_ids,
+            max_new_tokens=args.max_new_tokens,
+            temperature=args.temperature,
+            top_k=args.top_k,
+            top_p=args.top_p,
+            eos_ids=eos_ids,
+            on_token=on_token,
+            on_event=recorder,
+            use_cache=not args.no_cache,
+        )
+
+    if torch_profiling:
+        assert profile_dir is not None
+        with TorchProfiler(profile_dir / "torch.trace.json"):
+            result = run_generation()
+    else:
+        result = run_generation()
+
+    if profiling:
+        assert recorder is not None
+        assert profile_dir is not None
+        metadata = {
+            "model": args.model,
+            "device": DEVICE,
+            "dtype": str(DTYPE),
+            "use_cache": not args.no_cache,
+            "prompt": args.prompt,
+        }
+        recorder.export_chrome_trace(
+            profile_dir / "engine.trace.json",
+            metadata=metadata,
+        )
+        recorder.export_metrics(
+            profile_dir / "metrics.json",
+            result.metrics,
+            metadata=metadata,
+        )
 
     metrics = result.metrics
     print("\n\n" + "-" * 60)
@@ -73,6 +116,21 @@ def main() -> None:
     generate_parser.add_argument("--top-k", type=int, default=0)
     generate_parser.add_argument("--top-p", type=float, default=0.9)
     generate_parser.add_argument("--no-cache", action="store_true")
+    generate_parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="export lightweight engine and metrics profiles",
+    )
+    generate_parser.add_argument(
+        "--torch-profile",
+        action="store_true",
+        help="also export the large PyTorch operator profile",
+    )
+    generate_parser.add_argument(
+        "--profile-dir",
+        type=Path,
+        help="profile output directory; enables profiling",
+    )
 
     args = parser.parse_args()
     if args.max_new_tokens < 0:
