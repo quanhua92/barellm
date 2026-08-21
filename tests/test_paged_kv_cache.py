@@ -58,6 +58,41 @@ def test_paged_append_writes_new_token_after_boundary() -> None:
     )
 
 
+def test_paged_decode_appends_across_multiple_boundaries() -> None:
+    storage, pool = make_storage(block_size=2, max_blocks=3)
+    storage.register_request("A", pool.allocate(3))
+    layer = storage.get_cache("A").layer(0)
+
+    key = torch.arange(24, dtype=torch.float32).reshape(1, 2, 4, 3)
+    value = key + 100
+
+    layer.append(key[:, :, :2], value[:, :, :2])
+    layer.append(key[:, :, 2:3], value[:, :, 2:3])
+    layer.append(key[:, :, 3:4], value[:, :, 3:4])
+
+    assert layer.seq_len == 4
+    torch.testing.assert_close(layer.read(), (key, value))
+
+
+def test_paged_requests_do_not_share_values() -> None:
+    storage, pool = make_storage(max_blocks=2)
+    storage.register_request("A", pool.allocate(1))
+    storage.register_request("B", pool.allocate(1))
+
+    key_a = torch.ones(1, 2, 1, 3)
+    value_a = torch.ones(1, 2, 1, 3)
+    key_b = torch.full((1, 2, 1, 3), 2.0)
+    value_b = torch.full((1, 2, 1, 3), 2.0)
+
+    layer_a = storage.get_cache("A").layer(0)
+    layer_b = storage.get_cache("B").layer(0)
+    layer_a.append(key_a, value_a)
+    layer_b.append(key_b, value_b)
+
+    torch.testing.assert_close(layer_a.read(), (key_a, value_a))
+    torch.testing.assert_close(layer_b.read(), (key_b, value_b))
+
+
 def test_paged_layers_have_independent_storage_and_lengths() -> None:
     storage, pool = make_storage()
     storage.register_request("A", pool.allocate(2))
