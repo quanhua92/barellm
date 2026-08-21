@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Quan Hua", email = "quanhua92@gmail.com" }
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "torch",
     "transformers>=5.13.0",
