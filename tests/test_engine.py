@@ -1,3 +1,5 @@
+import time
+
 import pytest
 import torch
 from torch import nn
@@ -9,6 +11,7 @@ from barellm.engine.paged_kv_cache import PagedKVCache
 from barellm.engine.request import Request
 from barellm.engine.scheduler import Scheduler
 from barellm.models.qwen3 import Qwen3ForCausalLM
+from barellm.sampling.stops import FINISH_ABORT, FINISH_STOP
 
 
 class TinyEngineModel(nn.Module):
@@ -30,6 +33,74 @@ class TinyEngineModel(nn.Module):
         self.forward_calls += 1
         del position_ids, kv_cache, request_ids
         return self.lm_head(self.embedding(token_ids))
+
+
+class FixedTokenModel(nn.Module):
+    """Emit a predetermined token on each forward call."""
+
+    def __init__(self, tokens: list[int], vocab_size: int = 16):
+        super().__init__()
+        self.anchor = nn.Parameter(torch.zeros(()))
+        self.tokens = tokens
+        self.vocab_size = vocab_size
+        self.forward_calls = 0
+
+    def forward(
+        self,
+        token_ids: torch.Tensor,
+        position_ids: torch.Tensor | None = None,
+        kv_cache=None,
+        request_ids: list[str] | None = None,
+    ) -> torch.Tensor:
+        del position_ids, kv_cache, request_ids
+        token = self.tokens[min(self.forward_calls, len(self.tokens) - 1)]
+        self.forward_calls += 1
+        logits = torch.full(
+            (*token_ids.shape, self.vocab_size),
+            float("-inf"),
+            device=token_ids.device,
+        )
+        logits[..., token] = 0.0
+        return logits
+
+
+def make_test_engine(
+    model: nn.Module,
+    request: Request,
+) -> tuple[Engine, KVCacheManager, BlockPool, PagedKVCache]:
+    scheduler = Scheduler(max_batch=1)
+    scheduler.add_request(request)
+    block_size = 2
+    block_pool = BlockPool(4)
+    paged_kv_cache = PagedKVCache(
+        num_layers=1,
+        max_blocks=4,
+        num_kv_heads=1,
+        block_size=block_size,
+        head_dim=1,
+    )
+    kv_cache_manager = KVCacheManager(
+        block_size,
+        block_pool,
+        paged_kv_cache,
+    )
+    return (
+        Engine(model, scheduler, kv_cache_manager),
+        kv_cache_manager,
+        block_pool,
+        paged_kv_cache,
+    )
+
+
+def assert_cache_released(
+    request: Request,
+    manager: KVCacheManager,
+    pool: BlockPool,
+    paged_kv_cache: PagedKVCache,
+) -> None:
+    assert request.id not in manager.request_id_to_blocks
+    assert request.id not in paged_kv_cache.request_pages
+    assert len(pool.free_ids) == len(pool.blocks)
 
 
 class TestEngine:
@@ -192,3 +263,107 @@ class TestEngine:
         assert request.id not in kv_cache_manager.request_id_to_blocks
         assert request.id not in paged_kv_cache.request_pages
         assert len(block_pool.free_ids) == len(block_pool.blocks)
+
+    def test_eos_during_prefill_calls_callbacks_once_and_releases_cache(self):
+        streamed = []
+        finished = []
+        request = Request(
+            id="eos-prefill",
+            token_ids=torch.tensor([[1, 2]]),
+            max_new_tokens=4,
+            eos_ids={7},
+            on_token=lambda token_id, count: streamed.append((token_id, count)),
+            on_finish=lambda reason, stop: finished.append((reason, stop)),
+        )
+        model = FixedTokenModel([7])
+        engine, manager, pool, paged_kv_cache = make_test_engine(model, request)
+
+        engine.run(max_steps=2)
+
+        assert request.finish_reason == FINISH_STOP
+        assert request.stop_reason == 7
+        assert streamed == [(7, 3)]
+        assert finished == [(FINISH_STOP, 7)]
+        assert model.forward_calls == 1
+        assert_cache_released(request, manager, pool, paged_kv_cache)
+
+    def test_eos_during_decode_calls_callbacks_once_and_releases_cache(self):
+        streamed = []
+        finished = []
+        request = Request(
+            id="eos-decode",
+            token_ids=torch.tensor([[1, 2]]),
+            max_new_tokens=4,
+            eos_ids={7},
+            on_token=lambda token_id, count: streamed.append((token_id, count)),
+            on_finish=lambda reason, stop: finished.append((reason, stop)),
+        )
+        model = FixedTokenModel([5, 7])
+        engine, manager, pool, paged_kv_cache = make_test_engine(model, request)
+
+        engine.run(max_steps=3)
+
+        assert request.finish_reason == FINISH_STOP
+        assert request.stop_reason == 7
+        assert streamed == [(5, 3), (7, 4)]
+        assert finished == [(FINISH_STOP, 7)]
+        assert model.forward_calls == 2
+        assert_cache_released(request, manager, pool, paged_kv_cache)
+
+    def test_callback_abort_calls_finish_once_and_releases_cache(self):
+        finished = []
+        request = Request(
+            id="callback-abort",
+            token_ids=torch.tensor([[1, 2]]),
+            max_new_tokens=4,
+            on_token=lambda token_id, count: False,
+            on_finish=lambda reason, stop: finished.append((reason, stop)),
+        )
+        model = FixedTokenModel([5])
+        engine, manager, pool, paged_kv_cache = make_test_engine(model, request)
+
+        engine.run(max_steps=2)
+
+        assert request.finish_reason == FINISH_ABORT
+        assert request.stop_reason is None
+        assert finished == [(FINISH_ABORT, None)]
+        assert_cache_released(request, manager, pool, paged_kv_cache)
+
+    def test_stop_string_calls_finish_once_and_releases_cache(self):
+        finished = []
+        request = Request(
+            id="stop-string",
+            token_ids=torch.tensor([[1, 2]]),
+            max_new_tokens=4,
+            stop_strings=["<stop>"],
+            decode_fn=lambda token_ids: "hello<stop>",
+            on_finish=lambda reason, stop: finished.append((reason, stop)),
+        )
+        model = FixedTokenModel([5])
+        engine, manager, pool, paged_kv_cache = make_test_engine(model, request)
+
+        engine.run(max_steps=2)
+
+        assert request.finish_reason == FINISH_STOP
+        assert request.stop_reason == "<stop>"
+        assert finished == [(FINISH_STOP, "<stop>")]
+        assert_cache_released(request, manager, pool, paged_kv_cache)
+
+    def test_expired_deadline_aborts_and_releases_cache(self):
+        finished = []
+        request = Request(
+            id="deadline",
+            token_ids=torch.tensor([[1, 2]]),
+            max_new_tokens=4,
+            deadline=time.monotonic() - 1.0,
+            on_finish=lambda reason, stop: finished.append((reason, stop)),
+        )
+        model = FixedTokenModel([5])
+        engine, manager, pool, paged_kv_cache = make_test_engine(model, request)
+
+        engine.run(max_steps=2)
+
+        assert request.finish_reason == FINISH_ABORT
+        assert request.stop_reason is None
+        assert finished == [(FINISH_ABORT, None)]
+        assert_cache_released(request, manager, pool, paged_kv_cache)
