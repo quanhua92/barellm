@@ -1,3 +1,4 @@
+import pytest
 import torch
 from torch import nn
 
@@ -148,3 +149,46 @@ class TestEngine:
         assert request.generated_count == 1
         assert model.forward_calls == 0
         assert request.status.value == "running"
+
+    @pytest.mark.parametrize(
+        ("max_new_tokens", "expected_generated_count"),
+        [(0, 0), (1, 1)],
+    )
+    def test_request_finishing_during_prefill_releases_cache(
+        self,
+        max_new_tokens: int,
+        expected_generated_count: int,
+    ) -> None:
+        model = TinyEngineModel()
+        scheduler = Scheduler(max_batch=1)
+        request = Request(
+            id=f"prefill-finish-{max_new_tokens}",
+            token_ids=torch.tensor([[20, 30]]),
+            max_new_tokens=max_new_tokens,
+            temperature=0.0,
+        )
+        scheduler.add_request(request)
+
+        block_size = 2
+        block_pool = BlockPool(2)
+        paged_kv_cache = PagedKVCache(
+            num_layers=1,
+            max_blocks=2,
+            num_kv_heads=1,
+            block_size=block_size,
+            head_dim=1,
+        )
+        kv_cache_manager = KVCacheManager(
+            block_size,
+            block_pool,
+            paged_kv_cache,
+        )
+        engine = Engine(model, scheduler, kv_cache_manager)
+
+        engine.run(max_steps=2)
+
+        assert request.status.value == "finished"
+        assert request.generated_count == expected_generated_count
+        assert request.id not in kv_cache_manager.request_id_to_blocks
+        assert request.id not in paged_kv_cache.request_pages
+        assert len(block_pool.free_ids) == len(block_pool.blocks)

@@ -159,6 +159,8 @@ class Engine:
             self.scheduler.pop_request(req)
             self._prefill(req)
             self.scheduler.start_request(req)
+            if req.status == RequestStatus.FINISHED:
+                self.kv_cache_manager.free_request(req.id)
         # 1. Decode all active requests
         self._decode()
         # 2. Clean up finished requests
