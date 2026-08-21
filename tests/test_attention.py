@@ -3,6 +3,7 @@ from typing import Any
 import pytest
 import torch
 
+import barellm.models.attention as attention_module
 from barellm.models.attention import CausalSelfAttention, GroupedQueryAttention
 
 
@@ -139,6 +140,55 @@ def test_mqa_preserves_shape():
     assert output.shape == x.shape
 
 
+@pytest.mark.parametrize(
+    "num_kv_heads, group_size",
+    [(4, 1), (2, 2), (1, 4)],
+    ids=["mha", "gqa", "mqa"],
+)
+def test_kv_projection_shapes_match_head_layout(
+    num_kv_heads: int,
+    group_size: int,
+) -> None:
+    attention = make_gqa(num_kv_heads=num_kv_heads)
+
+    assert attention.q_proj.out_features == 4 * 4
+    assert attention.k_proj.out_features == num_kv_heads * 4
+    assert attention.v_proj.out_features == num_kv_heads * 4
+    assert attention.o_proj.in_features == 4 * 4
+    assert attention.group_size == group_size
+
+
+def test_gqa_repeats_each_kv_head_for_its_query_group(monkeypatch):
+    attention = make_gqa(num_kv_heads=2)
+    x = torch.randn(1, 3, 16)
+    captured: dict[str, torch.Tensor] = {}
+
+    def identity_rope(x, cos, sin):
+        return x
+
+    def capture_attention(q, k, v, **_kwargs):
+        captured["q"] = q
+        captured["k"] = k
+        captured["v"] = v
+        return torch.zeros_like(q)
+
+    monkeypatch.setattr(attention_module, "apply_rope", identity_rope)
+    monkeypatch.setattr(
+        attention_module.F,
+        "scaled_dot_product_attention",
+        capture_attention,
+    )
+
+    attention(x)
+
+    raw_k = attention.k_proj(x).view(1, 3, 2, 4).transpose(1, 2)
+    raw_v = attention.v_proj(x).view(1, 3, 2, 4).transpose(1, 2)
+
+    assert captured["q"].shape == (1, 4, 3, 4)
+    torch.testing.assert_close(captured["k"], raw_k.repeat_interleave(2, dim=1))
+    torch.testing.assert_close(captured["v"], raw_v.repeat_interleave(2, dim=1))
+
+
 def test_gqa_output_is_finite():
     attention = make_gqa()
     x = torch.randn(2, 8, 16)
@@ -189,6 +239,7 @@ def test_gqa_qk_norm_preserves_shape():
     assert output.shape == x.shape
 
 
-def test_gqa_rejects_invalid_head_grouping():
+@pytest.mark.parametrize("num_heads, num_kv_heads", [(4, 3), (4, 5), (4, 0)])
+def test_gqa_rejects_invalid_head_grouping(num_heads: int, num_kv_heads: int):
     with pytest.raises(ValueError):
-        make_gqa(num_heads=4, num_kv_heads=3)
+        make_gqa(num_heads=num_heads, num_kv_heads=num_kv_heads)
