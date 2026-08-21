@@ -69,18 +69,27 @@ The current paged implementation gathers K/V into dense tensors before SDPA. Dir
 
 ## Level 5 — Generation and continuous batching
 
-- [ ] Add a single-request `generate` convenience API
+- [x] Add a single-request `generate` convenience API
 - [ ] Support cached and no-cache generation paths
 - [x] Complete batched decode with per-request positions
-- [ ] Enforce maximum batch size and KV capacity during admission
+- [x] Enforce maximum batch size and KV capacity during admission
 - [x] Free blocks when requests finish
 - [x] Test mixed prompt lengths and generation limits
-- [ ] Test callbacks, aborts, EOS, stop strings, deadlines, and zero-token requests
+- [x] Test callbacks, aborts, EOS, stop strings, deadlines, and zero-token requests
 - [ ] Add end-to-end prompt-to-token tests
+
+The public `generate()` API currently accepts an already-configured `Engine`
+and one prompt tensor. It returns a structured `GenerationResult` and uses the
+engine's paged cache. A no-cache reference path and tokenizer-level end-to-end
+coverage are still planned.
+
+The lifecycle tests cover representative EOS, length, callback, abort,
+stop-string, deadline, and zero-token paths; exhaustive combinations and
+resource-stress tests remain future work.
 
 ## Level 6 — User-facing tooling
 
-- [x] Add direct-generation example
+- [x] Add public single-request generation example
 - [x] Add cached-generation example
 - [ ] Add batched-engine example
 - [x] Add Qwen3 model-loading example
