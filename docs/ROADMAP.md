@@ -94,9 +94,9 @@ reference path. The default remains paged cached generation.
 
 - [x] Add public single-request generation example
 - [x] Add cached-generation example
-- [ ] Add batched-engine example
+- [x] Add batched-engine example
 - [x] Add Qwen3 model-loading example
-- [ ] Complete the CLI
+- [x] Add basic `barellm generate` CLI
 - [x] Document ownership boundaries and tensor shapes
 - [x] Document prefill versus decode
 - [x] Document contiguous versus paged caching

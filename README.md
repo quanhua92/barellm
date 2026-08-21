@@ -56,6 +56,7 @@ Generate text with the paged KV cache:
 uv run python examples/generate_demo.py
 uv run python examples/generate_demo.py "Say hello world"
 uv run python examples/generate_demo.py --no-cache "Say hello world"
+uv run python examples/batch_demo.py
 ```
 
 `generate_demo.py` uses the public `barellm.engine.generate()` API. The lower-
@@ -69,6 +70,14 @@ The shared device configuration selects CUDA, MPS, or CPU automatically.
 
 The default demo uses the paged KV cache. `--no-cache` recomputes the complete
 sequence at every decode step and is intended for correctness comparisons.
+
+The batch demo drives the lower-level engine with multiple requests:
+
+```bash
+uv run barellm generate \
+  --prompt "Explain paged attention." \
+  --max-new-tokens 128
+```
 
 ## Ownership
 

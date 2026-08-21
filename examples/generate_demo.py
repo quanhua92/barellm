@@ -14,13 +14,7 @@ from transformers import AutoTokenizer
 
 from barellm.config import DEVICE, DTYPE, MODEL_ID
 from barellm.engine import generate
-from barellm.engine.block_pool import BlockPool
-from barellm.engine.engine import Engine
-from barellm.engine.kv_cache_manager import KVCacheManager
-from barellm.engine.paged_kv_cache import PagedKVCache
-from barellm.engine.scheduler import Scheduler
-from barellm.models.qwen3 import Qwen3ForCausalLM, load_config
-from barellm.models.weights import load_into_model, load_weights
+from barellm.runtime import load_qwen3_engine
 
 
 def sync() -> None:
@@ -28,41 +22,6 @@ def sync() -> None:
         torch.cuda.synchronize()
     elif DEVICE == "mps" and torch.backends.mps.is_available():
         torch.mps.synchronize()
-
-
-def build_engine(config, use_cache: bool) -> Engine:
-    model = Qwen3ForCausalLM.from_config(config)
-    model.to(device=DEVICE, dtype=DTYPE)
-
-    weights = load_weights(MODEL_ID, device=DEVICE, dtype=DTYPE)
-    load_into_model(model, weights, dtype=DTYPE)
-    model.eval()
-
-    cache_manager = None
-    if use_cache:
-        block_size = 16
-        num_blocks = 256
-        block_pool = BlockPool(num_blocks)
-        paged_kv_cache = PagedKVCache(
-            num_layers=config.num_hidden_layers,
-            max_blocks=num_blocks,
-            num_kv_heads=config.num_key_value_heads,
-            block_size=block_size,
-            head_dim=config.head_dim,
-            dtype=DTYPE,
-            device=DEVICE,
-        )
-        cache_manager = KVCacheManager(
-            block_size=block_size,
-            block_pool=block_pool,
-            paged_kv_cache=paged_kv_cache,
-        )
-
-    return Engine(
-        model=model,
-        scheduler=Scheduler(max_batch=1),
-        kv_cache_manager=cache_manager,
-    )
 
 
 def main() -> None:
@@ -99,8 +58,10 @@ def main() -> None:
 
     print("\n[2/4] Loading model...")
     start = time.perf_counter()
-    config = load_config(MODEL_ID)
-    engine = build_engine(config, use_cache=not args.no_cache)
+    config, engine = load_qwen3_engine(
+        MODEL_ID,
+        use_cache=not args.no_cache,
+    )
     print(f"  parameters:   {sum(p.numel() for p in engine.model.parameters()):,}")
     print(f"  time:         {time.perf_counter() - start:.3f}s")
 
