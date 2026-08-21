@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 from barellm.engine.block_pool import BlockPool
@@ -8,7 +9,7 @@ from barellm.models.attention import GroupedQueryAttention
 from barellm.models.qwen3 import Qwen3Config, Qwen3ForCausalLM, load_qwen3
 
 
-def make_small_model() -> Qwen3ForCausalLM:
+def make_small_model(num_kv_heads: int = 2) -> Qwen3ForCausalLM:
     return Qwen3ForCausalLM(
         vocab_size=100,
         hidden_size=16,
@@ -16,7 +17,7 @@ def make_small_model() -> Qwen3ForCausalLM:
         head_dim=4,
         num_layers=2,
         num_heads=4,
-        num_kv_heads=2,
+        num_kv_heads=num_kv_heads,
         use_qk_norm=True,
     )
 
@@ -170,6 +171,76 @@ def test_paged_cached_decode_matches_full_forward() -> None:
         atol=1e-5,
         rtol=1e-5,
     )
+
+
+@pytest.mark.parametrize(
+    "num_kv_heads",
+    [4, 2, 1],
+    ids=["mha", "gqa", "mqa"],
+)
+def test_paged_cached_multistep_decode_matches_full_forward(
+    num_kv_heads: int,
+) -> None:
+    torch.manual_seed(0)
+    model = make_small_model(num_kv_heads=num_kv_heads).eval()
+    prompt = torch.tensor([[10, 20, 30]])
+    generated = torch.tensor([[40, 50, 60]])
+    full_tokens = torch.cat([prompt, generated], dim=1)
+
+    with torch.inference_mode():
+        full_logits = model(
+            full_tokens,
+            position_ids=torch.arange(6).unsqueeze(0),
+        )
+
+    block_size = 2
+    pool = BlockPool(max_blocks=8)
+    paged_cache = PagedKVCache(
+        num_layers=len(model.layers),
+        max_blocks=8,
+        num_kv_heads=num_kv_heads,
+        block_size=block_size,
+        head_dim=4,
+    )
+    manager = KVCacheManager(block_size, pool, paged_cache)
+    request = Request(id="multistep", token_ids=prompt.clone())
+
+    assert manager.allocate_request(request)
+    cache = manager.get_cache(request)
+
+    with torch.inference_mode():
+        model(
+            prompt,
+            position_ids=torch.arange(3).unsqueeze(0),
+            kv_cache=cache,
+        )
+
+        for step in range(generated.shape[1]):
+            token = generated[:, step : step + 1]
+            request.append(token)
+            assert manager.allocate_request(request)
+
+            cached_logits = model(
+                token,
+                position_ids=torch.tensor([[3 + step]]),
+                kv_cache=manager.get_cache(request),
+            )
+
+            torch.testing.assert_close(
+                cached_logits[:, -1],
+                full_logits[:, 3 + step],
+                atol=1e-5,
+                rtol=1e-5,
+            )
+            cache_view = paged_cache.get_cache("multistep")
+            assert all(
+                cache_view.layer(layer_idx).seq_len == 4 + step
+                for layer_idx in range(len(model.layers))
+            )
+
+    cache_view = paged_cache.get_cache("multistep")
+    for layer_idx in range(len(model.layers)):
+        assert cache_view.layer(layer_idx).seq_len == 6
 
 
 def test_load_qwen3_connects_loading_pipeline(monkeypatch):
