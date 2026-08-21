@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 from barellm.engine.batched_kv_cache import BatchKVCache
@@ -41,7 +42,7 @@ def test_batch_cache_pads_unequal_histories_and_masks_padding() -> None:
     assert mask[1, 0, 0].tolist() == [True, True, True, True, True]
 
 
-def make_qwen3() -> Qwen3ForCausalLM:
+def make_qwen3(num_kv_heads: int) -> Qwen3ForCausalLM:
     return Qwen3ForCausalLM(
         vocab_size=64,
         hidden_size=16,
@@ -49,7 +50,7 @@ def make_qwen3() -> Qwen3ForCausalLM:
         head_dim=4,
         num_layers=2,
         num_heads=4,
-        num_kv_heads=2,
+        num_kv_heads=num_kv_heads,
         use_qk_norm=True,
     ).eval()
 
@@ -58,13 +59,14 @@ def prepare_requests(
     model: Qwen3ForCausalLM,
     prompts: list[torch.Tensor],
     next_tokens: list[torch.Tensor],
+    num_kv_heads: int,
 ) -> tuple[KVCacheManager, list[Request]]:
     block_size = 2
     pool = BlockPool(16)
     storage = PagedKVCache(
         num_layers=2,
         max_blocks=16,
-        num_kv_heads=2,
+        num_kv_heads=num_kv_heads,
         block_size=block_size,
         head_dim=4,
     )
@@ -87,9 +89,16 @@ def prepare_requests(
     return manager, requests
 
 
-def test_real_batched_paged_decode_matches_independent_decodes() -> None:
+@pytest.mark.parametrize(
+    "num_kv_heads",
+    [4, 2, 1],
+    ids=["mha", "gqa", "mqa"],
+)
+def test_real_batched_paged_decode_matches_independent_decodes(
+    num_kv_heads: int,
+) -> None:
     torch.manual_seed(0)
-    model = make_qwen3()
+    model = make_qwen3(num_kv_heads)
     prompts = [
         torch.tensor([[1, 2]]),
         torch.tensor([[3, 4, 5, 6]]),
@@ -98,7 +107,7 @@ def test_real_batched_paged_decode_matches_independent_decodes() -> None:
 
     with torch.inference_mode():
         independent_manager, independent_requests = prepare_requests(
-            model, prompts, next_tokens
+            model, prompts, next_tokens, num_kv_heads
         )
         independent_logits = []
         for request in independent_requests:
@@ -111,7 +120,7 @@ def test_real_batched_paged_decode_matches_independent_decodes() -> None:
             independent_logits.append(logits)
 
         batched_manager, batched_requests = prepare_requests(
-            model, prompts, next_tokens
+            model, prompts, next_tokens, num_kv_heads
         )
         for request in batched_requests:
             assert batched_manager.allocate_request(request)
