@@ -3,17 +3,18 @@
 Usage:
     uv run python examples/engine_demo.py
     uv run python examples/engine_demo.py "Say hello world"
+    uv run python examples/engine_demo.py --no-cache "Say hello world"
 """
 
 import argparse
 import time
 
-import torch
 from transformers import AutoTokenizer
 
 from barellm.config import DEVICE, DTYPE, MODEL_ID
 from barellm.engine.block_pool import BlockPool
 from barellm.engine.engine import Engine
+from barellm.engine.events import MetricsCollector
 from barellm.engine.kv_cache_manager import KVCacheManager
 from barellm.engine.paged_kv_cache import PagedKVCache
 from barellm.engine.request import Request
@@ -22,19 +23,17 @@ from barellm.models.qwen3 import Qwen3ForCausalLM, load_config
 from barellm.models.weights import load_into_model, load_weights
 
 
-def sync() -> None:
-    if DEVICE == "cuda":
-        torch.cuda.synchronize()
-    elif DEVICE == "mps" and torch.backends.mps.is_available():
-        torch.mps.synchronize()
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate text with BareLLM")
     parser.add_argument("prompt", nargs="?", default="/no_think What is 2+2?")
     parser.add_argument("--max-new-tokens", type=int, default=500)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-p", type=float, default=0.9)
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="use full-sequence recomputation as a correctness reference",
+    )
     args = parser.parse_args()
 
     if args.max_new_tokens <= 0:
@@ -45,7 +44,7 @@ def main() -> None:
     print("=" * 60)
     print(f"\n  device:       {DEVICE}")
     print(f"  dtype:        {DTYPE}")
-    print("  cache:        paged")
+    print(f"  cache:        {'off' if args.no_cache else 'paged'}")
     print(f"  prompt:       {args.prompt}")
 
     print("\n[1/4] Loading tokenizer...")
@@ -65,22 +64,26 @@ def main() -> None:
     print(f"  parameters:   {sum(p.numel() for p in model.parameters()):,}")
     print(f"  time:         {time.perf_counter() - start:.3f}s")
 
-    print("\n[3/4] Creating paged KV cache...")
-    block_size = 16
-    num_blocks = 256
-    pool = BlockPool(num_blocks)
-    paged_kv = PagedKVCache(
-        num_layers=cfg.num_hidden_layers,
-        max_blocks=num_blocks,
-        num_kv_heads=cfg.num_key_value_heads,
-        block_size=block_size,
-        head_dim=cfg.head_dim,
-        dtype=DTYPE,
-        device=DEVICE,
-    )
-    cache_manager = KVCacheManager(block_size, pool, paged_kv)
-    print(f"  blocks:       {num_blocks}")
-    print(f"  block size:   {block_size} tokens")
+    cache_manager: KVCacheManager | None = None
+    if args.no_cache:
+        print("\n[3/4] Using uncached reference path...")
+    else:
+        print("\n[3/4] Creating paged KV cache...")
+        block_size = 16
+        num_blocks = 256
+        pool = BlockPool(num_blocks)
+        paged_kv = PagedKVCache(
+            num_layers=cfg.num_hidden_layers,
+            max_blocks=num_blocks,
+            num_kv_heads=cfg.num_key_value_heads,
+            block_size=block_size,
+            head_dim=cfg.head_dim,
+            dtype=DTYPE,
+            device=DEVICE,
+        )
+        cache_manager = KVCacheManager(block_size, pool, paged_kv)
+        print(f"  blocks:       {num_blocks}")
+        print(f"  block size:   {block_size} tokens")
 
     messages = [{"role": "user", "content": args.prompt}]
     prompt_text = tokenizer.apply_chat_template(
@@ -96,18 +99,12 @@ def main() -> None:
 
     print(f"\n[4/4] Generating (max {args.max_new_tokens} tokens)...")
     print("\n  output: ", end="", flush=True)
-    token_times: list[float] = []
-    finish: list[tuple[str, int | str | None]] = []
-    start = time.perf_counter()
+    events = []
 
     def on_token(token_id: int, _count: int) -> bool:
-        token_times.append(time.perf_counter())
         piece = tokenizer.decode([token_id], skip_special_tokens=True)
         print(piece, end="", flush=True)
         return True
-
-    def on_finish(reason: str, stop_reason: int | str | None) -> None:
-        finish.append((reason, stop_reason))
 
     eos_ids = {cfg.eos_token_id}
     if tokenizer.eos_token_id is not None:
@@ -121,35 +118,27 @@ def main() -> None:
         top_p=args.top_p,
         eos_ids=eos_ids,
         on_token=on_token,
-        on_finish=on_finish,
     )
     scheduler = Scheduler(max_batch=1)
     scheduler.add_request(request)
     engine = Engine(model, scheduler, cache_manager)
-    engine.run()
-    sync()
+    engine.run(use_cache=not args.no_cache, on_event=events.append)
 
-    elapsed = time.perf_counter() - start
+    metrics_collector = MetricsCollector(request.id)
+    for event in events:
+        metrics_collector.on_event(event)
+    metrics = metrics_collector.build(request.generated_count)
     generated = request.generated_count
-    ttft = token_times[0] - start if token_times else 0.0
-    if len(token_times) > 1:
-        intervals = [
-            token_times[i + 1] - token_times[i] for i in range(len(token_times) - 1)
-        ]
-        avg_itl = sum(intervals) / len(intervals)
-    else:
-        avg_itl = 0.0
-    tok_per_s = 1.0 / avg_itl if avg_itl > 0 else 0.0
-    reason, stop_reason = finish[-1] if finish else ("unknown", None)
 
     print("\n\n" + "-" * 60)
     print(f"  generated:    {generated} tokens")
-    print(f"  finish:       {reason}")
-    print(f"  stop reason:  {stop_reason}")
-    print(f"  total time:   {elapsed:.3f}s")
-    print(f"  TTFT:         {ttft:.3f}s")
-    print(f"  avg ITL:      {avg_itl:.3f}s")
-    print(f"  decode tok/s: {tok_per_s:.1f}")
+    print(f"  finish:       {request.finish_reason}")
+    print(f"  stop reason:  {request.stop_reason}")
+    print(f"  total time:   {metrics.total_seconds:.3f}s")
+    print(f"  TTFT:         {metrics.time_to_first_token or 0.0:.3f}s")
+    print(f"  avg ITL:      {metrics.average_inter_token_latency or 0.0:.3f}s")
+    print(f"  prefill tok/s: {metrics.prefill_tokens_per_second:.1f}")
+    print(f"  decode tok/s:  {metrics.decode_tokens_per_second:.1f}")
     print("-" * 60)
 
 

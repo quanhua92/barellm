@@ -7,6 +7,13 @@ from torch import nn
 
 from barellm.engine.block_pool import BlockPool
 from barellm.engine.engine import Engine
+from barellm.engine.events import (
+    DecodeBatchEnd,
+    PrefillEnd,
+    RequestFinished,
+    RequestSubmitted,
+    TokenGenerated,
+)
 from barellm.engine.generate import GenerationResult, generate
 from barellm.engine.kv_cache_manager import KVCacheManager
 from barellm.engine.paged_kv_cache import PagedKVCache
@@ -110,6 +117,35 @@ def test_generate_returns_result_and_generated_view() -> None:
     assert result.prompt_length == 2
     assert result.generated_count == 1
     assert result.finish_reason == "length"
+
+
+@pytest.mark.parametrize("use_cache", [True, False])
+def test_generate_emits_lifecycle_events_and_metrics(use_cache: bool) -> None:
+    events = []
+    result = generate(
+        make_engine() if use_cache else make_uncached_engine(),
+        torch.tensor([[1, 2, 3]]),
+        max_new_tokens=3,
+        temperature=0.0,
+        eos_ids=set(),
+        use_cache=use_cache,
+        on_event=events.append,
+    )
+
+    assert isinstance(events[0], RequestSubmitted)
+    assert len([event for event in events if isinstance(event, RequestSubmitted)]) == 1
+    assert len([event for event in events if isinstance(event, PrefillEnd)]) == 1
+    assert len([event for event in events if isinstance(event, DecodeBatchEnd)]) == 2
+    tokens = [event for event in events if isinstance(event, TokenGenerated)]
+    finished = [event for event in events if isinstance(event, RequestFinished)]
+    assert len(tokens) == 3
+    assert len(finished) == 1
+    assert finished[0].generated_count == 3
+    assert result.metrics.prompt_tokens == 3
+    assert result.metrics.generated_tokens == 3
+    assert result.metrics.total_seconds >= result.metrics.prefill_seconds
+    assert result.metrics.prefill_tokens_per_second > 0.0
+    assert len(result.metrics.inter_token_latency_seconds) == 2
 
 
 def test_generate_forwards_deadline() -> None:

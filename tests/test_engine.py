@@ -6,6 +6,7 @@ from torch import nn
 
 from barellm.engine.block_pool import BlockPool
 from barellm.engine.engine import Engine
+from barellm.engine.events import RequestFinished, TokenGenerated
 from barellm.engine.kv_cache_manager import KVCacheManager
 from barellm.engine.paged_kv_cache import PagedKVCache
 from barellm.engine.request import Request
@@ -358,104 +359,120 @@ class TestEngine:
 
     def test_eos_during_prefill_calls_callbacks_once_and_releases_cache(self):
         streamed = []
-        finished = []
+        events = []
         request = Request(
             id="eos-prefill",
             token_ids=torch.tensor([[1, 2]]),
             max_new_tokens=4,
             eos_ids={7},
             on_token=lambda token_id, count: streamed.append((token_id, count)),
-            on_finish=lambda reason, stop: finished.append((reason, stop)),
         )
         model = FixedTokenModel([7])
         engine, manager, pool, paged_kv_cache = make_test_engine(model, request)
 
-        engine.run(max_steps=2)
+        engine.run(max_steps=2, on_event=events.append)
 
         assert request.finish_reason == FINISH_STOP
         assert request.stop_reason == 7
         assert streamed == [(7, 3)]
-        assert finished == [(FINISH_STOP, 7)]
+        finished = [event for event in events if isinstance(event, RequestFinished)]
+        assert len(finished) == 1
+        assert finished[0].finish_reason == FINISH_STOP
+        assert finished[0].stop_reason == 7
+        assert (
+            len([event for event in events if isinstance(event, TokenGenerated)]) == 1
+        )
         assert model.forward_calls == 1
         assert_cache_released(request, manager, pool, paged_kv_cache)
 
     def test_eos_during_decode_calls_callbacks_once_and_releases_cache(self):
         streamed = []
-        finished = []
+        events = []
         request = Request(
             id="eos-decode",
             token_ids=torch.tensor([[1, 2]]),
             max_new_tokens=4,
             eos_ids={7},
             on_token=lambda token_id, count: streamed.append((token_id, count)),
-            on_finish=lambda reason, stop: finished.append((reason, stop)),
         )
         model = FixedTokenModel([5, 7])
         engine, manager, pool, paged_kv_cache = make_test_engine(model, request)
 
-        engine.run(max_steps=3)
+        engine.run(max_steps=3, on_event=events.append)
 
         assert request.finish_reason == FINISH_STOP
         assert request.stop_reason == 7
         assert streamed == [(5, 3), (7, 4)]
-        assert finished == [(FINISH_STOP, 7)]
+        finished = [event for event in events if isinstance(event, RequestFinished)]
+        assert len(finished) == 1
+        assert finished[0].finish_reason == FINISH_STOP
+        assert finished[0].stop_reason == 7
+        assert (
+            len([event for event in events if isinstance(event, TokenGenerated)]) == 2
+        )
         assert model.forward_calls == 2
         assert_cache_released(request, manager, pool, paged_kv_cache)
 
     def test_callback_abort_calls_finish_once_and_releases_cache(self):
-        finished = []
+        events = []
         request = Request(
             id="callback-abort",
             token_ids=torch.tensor([[1, 2]]),
             max_new_tokens=4,
             on_token=lambda token_id, count: False,
-            on_finish=lambda reason, stop: finished.append((reason, stop)),
         )
         model = FixedTokenModel([5])
         engine, manager, pool, paged_kv_cache = make_test_engine(model, request)
 
-        engine.run(max_steps=2)
+        engine.run(max_steps=2, on_event=events.append)
 
         assert request.finish_reason == FINISH_ABORT
         assert request.stop_reason is None
-        assert finished == [(FINISH_ABORT, None)]
+        finished = [event for event in events if isinstance(event, RequestFinished)]
+        assert len(finished) == 1
+        assert finished[0].finish_reason == FINISH_ABORT
+        assert finished[0].stop_reason is None
         assert_cache_released(request, manager, pool, paged_kv_cache)
 
     def test_stop_string_calls_finish_once_and_releases_cache(self):
-        finished = []
+        events = []
         request = Request(
             id="stop-string",
             token_ids=torch.tensor([[1, 2]]),
             max_new_tokens=4,
             stop_strings=["<stop>"],
             decode_fn=lambda token_ids: "hello<stop>",
-            on_finish=lambda reason, stop: finished.append((reason, stop)),
         )
         model = FixedTokenModel([5])
         engine, manager, pool, paged_kv_cache = make_test_engine(model, request)
 
-        engine.run(max_steps=2)
+        engine.run(max_steps=2, on_event=events.append)
 
         assert request.finish_reason == FINISH_STOP
         assert request.stop_reason == "<stop>"
-        assert finished == [(FINISH_STOP, "<stop>")]
+        finished = [event for event in events if isinstance(event, RequestFinished)]
+        assert len(finished) == 1
+        assert finished[0].finish_reason == FINISH_STOP
+        assert finished[0].stop_reason == "<stop>"
         assert_cache_released(request, manager, pool, paged_kv_cache)
 
     def test_expired_deadline_aborts_and_releases_cache(self):
-        finished = []
+        events = []
         request = Request(
             id="deadline",
             token_ids=torch.tensor([[1, 2]]),
             max_new_tokens=4,
             deadline=time.monotonic() - 1.0,
-            on_finish=lambda reason, stop: finished.append((reason, stop)),
         )
         model = FixedTokenModel([5])
         engine, manager, pool, paged_kv_cache = make_test_engine(model, request)
 
-        engine.run(max_steps=2)
+        engine.run(max_steps=2, on_event=events.append)
 
         assert request.finish_reason == FINISH_ABORT
         assert request.stop_reason is None
-        assert finished == [(FINISH_ABORT, None)]
+        finished = [event for event in events if isinstance(event, RequestFinished)]
+        assert len(finished) == 1
+        assert finished[0].finish_reason == FINISH_ABORT
+        assert finished[0].stop_reason is None
         assert_cache_released(request, manager, pool, paged_kv_cache)

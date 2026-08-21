@@ -76,6 +76,7 @@ The current paged implementation gathers K/V into dense tensors before SDPA. Dir
 - [x] Free blocks when requests finish
 - [x] Test mixed prompt lengths and generation limits
 - [x] Test callbacks, aborts, EOS, stop strings, deadlines, and zero-token requests
+- [x] Add typed lifecycle events and generation timing metrics
 - [ ] Add end-to-end prompt-to-token tests
 
 The public `generate()` API currently accepts an already-configured `Engine`
@@ -86,6 +87,10 @@ coverage are still planned.
 The lifecycle tests cover representative EOS, length, callback, abort,
 stop-string, deadline, and zero-token paths; exhaustive combinations and
 resource-stress tests remain future work.
+
+The event stream is documented in [`docs/EVENTS.md`](EVENTS.md). `on_token`
+remains the streaming and abort hook; request completion is reported through
+the typed `RequestFinished` event and `GenerationResult` fields.
 
 `generate(..., use_cache=False)` is the intentionally slow full-recomputation
 reference path. The default remains paged cached generation.

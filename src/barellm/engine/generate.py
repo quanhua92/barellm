@@ -4,9 +4,14 @@ from uuid import uuid4
 import torch
 
 from barellm.engine.engine import Engine
+from barellm.engine.events import (
+    EventCallback,
+    GenerationMetrics,
+    MetricsCollector,
+    TimingConfig,
+)
 from barellm.engine.request import (
     DecodeFunction,
-    FinishCallback,
     Request,
     TokenCallback,
 )
@@ -19,6 +24,7 @@ class GenerationResult:
     finish_reason: str | None
     stop_reason: int | str | None
     generated_count: int
+    metrics: GenerationMetrics
 
     @property
     def prompt_length(self) -> int:
@@ -44,10 +50,11 @@ def generate(
     stop_strings: list[str] | None = None,
     decode_fn: DecodeFunction | None = None,
     on_token: TokenCallback | None = None,
-    on_finish: FinishCallback | None = None,
+    on_event: EventCallback | None = None,
     request_id: str | None = None,
     deadline: float | None = None,
     use_cache: bool = True,
+    timing: TimingConfig | None = None,
 ) -> GenerationResult:
     check(
         token_ids.ndim == 2,
@@ -109,15 +116,27 @@ def generate(
         stop_strings=None if stop_strings is None else list(stop_strings),
         decode_fn=decode_fn,
         on_token=on_token,
-        on_finish=on_finish,
         deadline=deadline,
     )
+
+    collector = MetricsCollector(request.id)
+
+    def handle_event(event):
+        collector.on_event(event)
+        if on_event is not None:
+            on_event(event)
+
     engine.scheduler.add_request(request)
-    engine.run(use_cache=use_cache)
+    engine.run(
+        use_cache=use_cache,
+        on_event=handle_event,
+        timing=timing,
+    )
 
     return GenerationResult(
         token_ids=request.token_ids,
         finish_reason=request.finish_reason,
         stop_reason=request.stop_reason,
         generated_count=request.generated_count,
+        metrics=collector.build(request.generated_count),
     )

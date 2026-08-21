@@ -41,6 +41,8 @@ The current SDPA contract and its prefill/decode masking rules are documented
 in [`docs/SDPA.md`](docs/SDPA.md).
 The cache protocols, storage backends, block ownership, and request lifecycle
 are documented in [`docs/CACHE.md`](docs/CACHE.md).
+The engine event stream and generation timing metrics are documented in
+[`docs/EVENTS.md`](docs/EVENTS.md).
 
 ## Run the demos
 
@@ -64,6 +66,7 @@ level wiring example is available as:
 
 ```bash
 uv run python examples/engine_demo.py "Say hello world"
+uv run python examples/engine_demo.py --no-cache "Say hello world"
 ```
 
 The shared device configuration selects CUDA, MPS, or CPU automatically.

@@ -9,19 +9,11 @@ Usage:
 import argparse
 import time
 
-import torch
 from transformers import AutoTokenizer
 
 from barellm.config import DEVICE, DTYPE, MODEL_ID
 from barellm.engine import generate
 from barellm.runtime import load_qwen3_engine
-
-
-def sync() -> None:
-    if DEVICE == "cuda":
-        torch.cuda.synchronize()
-    elif DEVICE == "mps" and torch.backends.mps.is_available():
-        torch.mps.synchronize()
 
 
 def main() -> None:
@@ -81,11 +73,7 @@ def main() -> None:
     print(f"\n[4/4] Generating (max {args.max_new_tokens} tokens)...")
     print("\n  output: ", end="", flush=True)
 
-    token_times: list[float] = []
-    start = time.perf_counter()
-
     def on_token(token_id: int, _count: int) -> bool:
-        token_times.append(time.perf_counter())
         piece = tokenizer.decode([token_id], skip_special_tokens=True)
         print(piece, end="", flush=True)
         return True
@@ -104,27 +92,17 @@ def main() -> None:
         on_token=on_token,
         use_cache=not args.no_cache,
     )
-    sync()
-
-    elapsed = time.perf_counter() - start
-    ttft = token_times[0] - start if token_times else 0.0
-    if len(token_times) > 1:
-        intervals = [
-            token_times[i + 1] - token_times[i] for i in range(len(token_times) - 1)
-        ]
-        avg_itl = sum(intervals) / len(intervals)
-    else:
-        avg_itl = 0.0
-    tok_per_s = 1.0 / avg_itl if avg_itl > 0 else 0.0
+    metrics = result.metrics
 
     print("\n\n" + "-" * 60)
     print(f"  generated:    {result.generated_count} tokens")
     print(f"  finish:       {result.finish_reason}")
     print(f"  stop reason:  {result.stop_reason}")
-    print(f"  total time:   {elapsed:.3f}s")
-    print(f"  TTFT:         {ttft:.3f}s")
-    print(f"  avg ITL:      {avg_itl:.3f}s")
-    print(f"  decode tok/s: {tok_per_s:.1f}")
+    print(f"  total time:   {metrics.total_seconds:.3f}s")
+    print(f"  TTFT:         {metrics.time_to_first_token or 0.0:.3f}s")
+    print(f"  avg ITL:      {metrics.average_inter_token_latency or 0.0:.3f}s")
+    print(f"  prefill tok/s: {metrics.prefill_tokens_per_second:.1f}")
+    print(f"  decode tok/s:  {metrics.decode_tokens_per_second:.1f}")
     print("-" * 60)
 
 

@@ -1,7 +1,5 @@
 import argparse
-import time
 
-import torch
 from transformers import AutoTokenizer
 
 from barellm.config import DEVICE, DTYPE, MODEL_ID
@@ -30,11 +28,7 @@ def _generate(args: argparse.Namespace) -> None:
     if tokenizer.eos_token_id is not None:
         eos_ids.add(tokenizer.eos_token_id)
 
-    token_times: list[float] = []
-    start = time.perf_counter()
-
     def on_token(token_id: int, _count: int) -> bool:
-        token_times.append(time.perf_counter())
         print(
             tokenizer.decode([token_id], skip_special_tokens=True), end="", flush=True
         )
@@ -52,17 +46,15 @@ def _generate(args: argparse.Namespace) -> None:
         use_cache=not args.no_cache,
     )
 
-    if DEVICE == "cuda":
-        torch.cuda.synchronize()
-    elif DEVICE == "mps" and torch.backends.mps.is_available():
-        torch.mps.synchronize()
-
-    elapsed = time.perf_counter() - start
+    metrics = result.metrics
     print("\n\n" + "-" * 60)
     print(f"  generated: {result.generated_count} tokens")
     print(f"  finish:    {result.finish_reason}")
     print(f"  stop:      {result.stop_reason}")
-    print(f"  elapsed:   {elapsed:.3f}s")
+    print(f"  elapsed:   {metrics.total_seconds:.3f}s")
+    print(f"  TTFT:      {metrics.time_to_first_token or 0.0:.3f}s")
+    print(f"  prefill:   {metrics.prefill_tokens_per_second:.1f} tok/s")
+    print(f"  decode:    {metrics.decode_tokens_per_second:.1f} tok/s")
     print("-" * 60)
 
 

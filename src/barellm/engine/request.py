@@ -19,10 +19,6 @@ TokenCallback = Callable[
     [int, int], bool | None
 ]  # on_token(token_id: int, count:int) -> bool | None) (returns False to abort)
 
-FinishCallback = Callable[
-    [str, int | str | None], None
-]  # on_finish(finish_reason: str, stop_reason: int | str | None) -> None
-
 
 @dataclass
 class Request:
@@ -38,10 +34,11 @@ class Request:
     deadline: float | None = None
     decode_fn: DecodeFunction | None = None
     on_token: TokenCallback | None = None
-    on_finish: FinishCallback | None = None
     finish_reason: str | None = None
     stop_reason: int | str | None = None
     generated_count: int = 0
+    submitted_event_emitted: bool = field(default=False, init=False, repr=False)
+    finish_event_emitted: bool = field(default=False, init=False, repr=False)
 
     @property
     def seq_len(self) -> int:
