@@ -56,6 +56,13 @@ uv run python examples/generate_demo.py
 uv run python examples/generate_demo.py "Say hello world"
 ```
 
+`generate_demo.py` uses the public `barellm.engine.generate()` API. The lower-
+level wiring example is available as:
+
+```bash
+uv run python examples/engine_demo.py "Say hello world"
+```
+
 The shared device configuration selects CUDA, MPS, or CPU automatically.
 
 ## Ownership

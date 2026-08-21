@@ -80,7 +80,7 @@ The current paged implementation gathers K/V into dense tensors before SDPA. Dir
 
 ## Level 6 — User-facing tooling
 
-- [ ] Add direct-generation example
+- [x] Add direct-generation example
 - [x] Add cached-generation example
 - [ ] Add batched-engine example
 - [x] Add Qwen3 model-loading example
