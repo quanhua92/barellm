@@ -248,9 +248,12 @@ count and the blocks already assigned. It then registers the complete block
 list with `PagedKVCache`.
 
 If the pool lacks capacity, allocation returns `False`. During admission the
-engine leaves later requests waiting; during decode it skips requests that
-cannot obtain their next block. Storage also checks capacity defensively and
-raises if an append would exceed the registered block list.
+engine leaves the request waiting while another running request can still make
+progress and release blocks; during decode it skips requests that cannot obtain
+their next block. Storage also checks capacity defensively and raises if an
+append would exceed the registered block list. If an entire engine step makes
+no progress, the engine raises a clear runtime error instead of spinning
+forever.
 
 `free_request`:
 
@@ -309,6 +312,29 @@ request token count = cached token count
 after sampling:
 request token count = cached token count + 1
 ```
+
+## Uncached reference path
+
+The engine can intentionally run without a KV cache by calling:
+
+```python
+generate(engine, token_ids, use_cache=False)
+```
+
+In this mode the engine does not allocate blocks or create cache views. Prefill
+and every decode step pass the complete request sequence to the model with
+`kv_cache=None` and position IDs `[0, 1, ..., T - 1]`. The model's causal SDPA
+path therefore recomputes all earlier K/V projections on every step.
+
+This path is deliberately slow. Its purpose is to act as an oracle for the
+paged path:
+
+```text
+uncached full recomputation logits ~= paged cached logits
+```
+
+The public convenience API remains single-prompt; cached continuous batching
+and uncached reference execution are separate execution paths.
 
 ## Batched decode adapter
 

@@ -150,6 +150,20 @@ Direct attention over physical pages is a future optimization. The current
 dense-gather path keeps the attention implementation easy to compare against
 the contiguous reference cache.
 
+## Uncached reference execution
+
+When `kv_cache=None`, attention receives the complete sequence on every model
+call. For a prompt of length `T`, prefill uses:
+
+```text
+Q/K/V: [1, heads, T, head_dim]
+```
+
+After sampling one token, the next decode call recomputes the sequence of
+length `T + 1`, then `T + 2`, and so on. Because each call contains the whole
+sequence, SDPA's causal mode is sufficient and no padding mask or cache mask is
+needed. This is the slow reference path used to verify cached decoding.
+
 ## Grouped-query attention
 
 BareLLM currently repeats KV heads explicitly:

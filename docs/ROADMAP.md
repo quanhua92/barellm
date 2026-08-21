@@ -70,7 +70,7 @@ The current paged implementation gathers K/V into dense tensors before SDPA. Dir
 ## Level 5 — Generation and continuous batching
 
 - [x] Add a single-request `generate` convenience API
-- [ ] Support cached and no-cache generation paths
+- [x] Support cached and no-cache generation paths
 - [x] Complete batched decode with per-request positions
 - [x] Enforce maximum batch size and KV capacity during admission
 - [x] Free blocks when requests finish
@@ -86,6 +86,9 @@ coverage are still planned.
 The lifecycle tests cover representative EOS, length, callback, abort,
 stop-string, deadline, and zero-token paths; exhaustive combinations and
 resource-stress tests remain future work.
+
+`generate(..., use_cache=False)` is the intentionally slow full-recomputation
+reference path. The default remains paged cached generation.
 
 ## Level 6 — User-facing tooling
 

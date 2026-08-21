@@ -12,6 +12,7 @@ from barellm.engine.kv_cache_manager import KVCacheManager
 from barellm.engine.paged_kv_cache import PagedKVCache
 from barellm.engine.request import Request
 from barellm.engine.scheduler import Scheduler
+from barellm.models.qwen3 import Qwen3ForCausalLM
 
 
 class FixedTokenModel(nn.Module):
@@ -20,6 +21,9 @@ class FixedTokenModel(nn.Module):
         self.anchor = nn.Parameter(torch.zeros(()))
         self.token = token
         self.vocab_size = vocab_size
+        self.input_lengths: list[int] = []
+        self.position_ids: list[list[int] | None] = []
+        self.cache_was_none: list[bool] = []
 
     def forward(
         self,
@@ -28,7 +32,12 @@ class FixedTokenModel(nn.Module):
         kv_cache=None,
         request_ids: list[str] | None = None,
     ) -> torch.Tensor:
-        del position_ids, kv_cache, request_ids
+        del request_ids
+        self.input_lengths.append(token_ids.shape[1])
+        self.position_ids.append(
+            None if position_ids is None else position_ids[0].tolist()
+        )
+        self.cache_was_none.append(kv_cache is None)
         logits = torch.full(
             (*token_ids.shape, self.vocab_size),
             float("-inf"),
@@ -55,6 +64,36 @@ def make_engine() -> Engine:
         paged_kv_cache,
     )
     return Engine(FixedTokenModel(5), scheduler, manager)
+
+
+def make_uncached_engine(model: nn.Module | None = None) -> Engine:
+    return Engine(
+        model or FixedTokenModel(5),
+        Scheduler(max_batch=1),
+        None,
+    )
+
+
+def make_qwen_engine(
+    model: Qwen3ForCausalLM,
+    cached: bool,
+    num_kv_heads: int,
+) -> Engine:
+    scheduler = Scheduler(max_batch=1)
+    if not cached:
+        return Engine(model, scheduler, None)
+
+    block_size = 2
+    block_pool = BlockPool(8)
+    paged_kv_cache = PagedKVCache(
+        num_layers=len(model.layers),
+        max_blocks=8,
+        num_kv_heads=num_kv_heads,
+        block_size=block_size,
+        head_dim=4,
+    )
+    manager = KVCacheManager(block_size, block_pool, paged_kv_cache)
+    return Engine(model, scheduler, manager)
 
 
 def test_generate_returns_result_and_generated_view() -> None:
@@ -84,6 +123,91 @@ def test_generate_forwards_deadline() -> None:
 
     assert result.finish_reason == "abort"
     assert result.stop_reason is None
+
+
+def test_generate_uncached_recomputes_the_full_sequence() -> None:
+    model = FixedTokenModel(5)
+    result = generate(
+        make_uncached_engine(model),
+        torch.tensor([[1, 2]]),
+        max_new_tokens=2,
+        temperature=0.0,
+        use_cache=False,
+    )
+
+    assert result.token_ids.tolist() == [[1, 2, 5, 5]]
+    assert model.input_lengths == [2, 3]
+    assert model.position_ids == [[0, 1], [0, 1, 2]]
+    assert model.cache_was_none == [True, True]
+
+
+def test_generate_requires_cache_manager_for_cached_mode() -> None:
+    with pytest.raises(ValueError, match="KV cache manager"):
+        generate(
+            make_uncached_engine(),
+            torch.tensor([[1, 2]]),
+            max_new_tokens=1,
+            use_cache=True,
+        )
+
+
+@pytest.mark.parametrize(
+    "num_kv_heads",
+    [4, 2, 1],
+    ids=["mha", "gqa", "mqa"],
+)
+def test_cached_and_uncached_generation_match(
+    num_kv_heads: int,
+) -> None:
+    torch.manual_seed(0)
+    cached_model = Qwen3ForCausalLM(
+        vocab_size=64,
+        hidden_size=16,
+        intermediate_size=32,
+        head_dim=4,
+        num_layers=2,
+        num_heads=4,
+        num_kv_heads=num_kv_heads,
+        use_qk_norm=True,
+    ).eval()
+    uncached_model = Qwen3ForCausalLM(
+        vocab_size=64,
+        hidden_size=16,
+        intermediate_size=32,
+        head_dim=4,
+        num_layers=2,
+        num_heads=4,
+        num_kv_heads=num_kv_heads,
+        use_qk_norm=True,
+    ).eval()
+    uncached_model.load_state_dict(cached_model.state_dict())
+
+    prompt = torch.tensor([[1, 2, 3]])
+    with torch.inference_mode():
+        cached = generate(
+            make_qwen_engine(cached_model, cached=True, num_kv_heads=num_kv_heads),
+            prompt,
+            max_new_tokens=3,
+            temperature=0.0,
+            eos_ids=set(),
+            use_cache=True,
+        )
+        uncached = generate(
+            make_qwen_engine(
+                uncached_model,
+                cached=False,
+                num_kv_heads=num_kv_heads,
+            ),
+            prompt,
+            max_new_tokens=3,
+            temperature=0.0,
+            eos_ids=set(),
+            use_cache=False,
+        )
+
+    assert cached.finish_reason == uncached.finish_reason == "length"
+    assert cached.generated_count == uncached.generated_count == 3
+    torch.testing.assert_close(cached.token_ids, uncached.token_ids)
 
 
 @pytest.mark.parametrize(

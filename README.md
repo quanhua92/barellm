@@ -30,6 +30,7 @@ BareLLM can load a Qwen3-compatible checkpoint and generate text using:
 - Qwen3 embeddings, RMSNorm, RoPE, SwiGLU, GQA, and tied LM head;
 - contiguous KV cache as a reference implementation;
 - paged KV cache with fixed-size physical blocks;
+- uncached full-sequence recomputation as a correctness reference;
 - one-token batched decode with unequal request lengths and padding masks;
 - MHA, GQA, and MQA cache-equivalence coverage across contiguous and paged
   storage.
@@ -54,6 +55,7 @@ Generate text with the paged KV cache:
 ```bash
 uv run python examples/generate_demo.py
 uv run python examples/generate_demo.py "Say hello world"
+uv run python examples/generate_demo.py --no-cache "Say hello world"
 ```
 
 `generate_demo.py` uses the public `barellm.engine.generate()` API. The lower-
@@ -64,6 +66,9 @@ uv run python examples/engine_demo.py "Say hello world"
 ```
 
 The shared device configuration selects CUDA, MPS, or CPU automatically.
+
+The default demo uses the paged KV cache. `--no-cache` recomputes the complete
+sequence at every decode step and is intended for correctness comparisons.
 
 ## Ownership
 

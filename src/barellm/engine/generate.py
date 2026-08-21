@@ -47,6 +47,7 @@ def generate(
     on_finish: FinishCallback | None = None,
     request_id: str | None = None,
     deadline: float | None = None,
+    use_cache: bool = True,
 ) -> GenerationResult:
     check(
         token_ids.ndim == 2,
@@ -92,6 +93,10 @@ def generate(
         not engine.scheduler.waiting and not engine.scheduler.running,
         "generate requires an idle engine",
     )
+    check(
+        not use_cache or engine.kv_cache_manager is not None,
+        "cached execution requires a KV cache manager",
+    )
 
     request = Request(
         id=request_id or f"generate-{uuid4().hex}",
@@ -108,7 +113,7 @@ def generate(
         deadline=deadline,
     )
     engine.scheduler.add_request(request)
-    engine.run()
+    engine.run(use_cache=use_cache)
 
     return GenerationResult(
         token_ids=request.token_ids,

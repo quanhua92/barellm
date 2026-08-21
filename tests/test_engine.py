@@ -221,6 +221,98 @@ class TestEngine:
         assert model.forward_calls == 0
         assert request.status.value == "running"
 
+    def test_run_raises_when_prompt_cannot_fit_in_cache(self):
+        model = TinyEngineModel()
+        scheduler = Scheduler(max_batch=1)
+        request = Request(
+            id="oversized-prompt",
+            token_ids=torch.tensor([[20, 30, 40]]),
+            max_new_tokens=1,
+        )
+        scheduler.add_request(request)
+        block_pool = BlockPool(1)
+        paged_kv_cache = PagedKVCache(
+            num_layers=1,
+            max_blocks=1,
+            num_kv_heads=1,
+            block_size=2,
+            head_dim=1,
+        )
+        manager = KVCacheManager(2, block_pool, paged_kv_cache)
+        engine = Engine(model, scheduler, manager)
+
+        with pytest.raises(RuntimeError, match="made no progress"):
+            engine.run()
+
+        assert request.status.value == "waiting"
+        assert request.id not in manager.request_id_to_blocks
+        assert request.id not in paged_kv_cache.request_pages
+        assert len(block_pool.free_ids) == 1
+
+    def test_run_raises_when_decode_cannot_grow_cache(self):
+        model = TinyEngineModel()
+        scheduler = Scheduler(max_batch=1)
+        request = Request(
+            id="blocked-decode",
+            token_ids=torch.tensor([[20, 30]]),
+            max_new_tokens=2,
+        )
+        scheduler.add_request(request)
+        block_pool = BlockPool(1)
+        paged_kv_cache = PagedKVCache(
+            num_layers=1,
+            max_blocks=1,
+            num_kv_heads=1,
+            block_size=2,
+            head_dim=1,
+        )
+        manager = KVCacheManager(2, block_pool, paged_kv_cache)
+        engine = Engine(model, scheduler, manager)
+
+        with pytest.raises(RuntimeError, match="made no progress"):
+            engine.run()
+
+        assert request.generated_count == 1
+        assert request.status.value == "running"
+        assert len(manager.request_id_to_blocks[request.id]) == 1
+        assert len(block_pool.free_ids) == 0
+
+    def test_waiting_request_retries_after_another_request_releases_blocks(self):
+        model = FixedTokenModel([7])
+        scheduler = Scheduler(max_batch=1)
+        first = Request(
+            id="first",
+            token_ids=torch.tensor([[20, 30]]),
+            max_new_tokens=1,
+            temperature=0.0,
+        )
+        second = Request(
+            id="second",
+            token_ids=torch.tensor([[40, 50]]),
+            max_new_tokens=1,
+            temperature=0.0,
+        )
+        scheduler.add_request(first)
+        scheduler.add_request(second)
+        block_pool = BlockPool(1)
+        paged_kv_cache = PagedKVCache(
+            num_layers=1,
+            max_blocks=1,
+            num_kv_heads=1,
+            block_size=2,
+            head_dim=1,
+        )
+        manager = KVCacheManager(2, block_pool, paged_kv_cache)
+        engine = Engine(model, scheduler, manager)
+
+        engine.run()
+
+        assert first.finish_reason == "length"
+        assert second.finish_reason == "length"
+        assert not scheduler.waiting
+        assert not scheduler.running
+        assert len(block_pool.free_ids) == 1
+
     @pytest.mark.parametrize(
         ("max_new_tokens", "expected_generated_count"),
         [(0, 0), (1, 1)],

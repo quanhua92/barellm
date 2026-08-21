@@ -3,6 +3,7 @@
 Usage:
     uv run python examples/generate_demo.py
     uv run python examples/generate_demo.py "Say hello world"
+    uv run python examples/generate_demo.py --no-cache "Say hello world"
 """
 
 import argparse
@@ -29,7 +30,7 @@ def sync() -> None:
         torch.mps.synchronize()
 
 
-def build_engine(config) -> Engine:
+def build_engine(config, use_cache: bool) -> Engine:
     model = Qwen3ForCausalLM.from_config(config)
     model.to(device=DEVICE, dtype=DTYPE)
 
@@ -37,23 +38,25 @@ def build_engine(config) -> Engine:
     load_into_model(model, weights, dtype=DTYPE)
     model.eval()
 
-    block_size = 16
-    num_blocks = 256
-    block_pool = BlockPool(num_blocks)
-    paged_kv_cache = PagedKVCache(
-        num_layers=config.num_hidden_layers,
-        max_blocks=num_blocks,
-        num_kv_heads=config.num_key_value_heads,
-        block_size=block_size,
-        head_dim=config.head_dim,
-        dtype=DTYPE,
-        device=DEVICE,
-    )
-    cache_manager = KVCacheManager(
-        block_size=block_size,
-        block_pool=block_pool,
-        paged_kv_cache=paged_kv_cache,
-    )
+    cache_manager = None
+    if use_cache:
+        block_size = 16
+        num_blocks = 256
+        block_pool = BlockPool(num_blocks)
+        paged_kv_cache = PagedKVCache(
+            num_layers=config.num_hidden_layers,
+            max_blocks=num_blocks,
+            num_kv_heads=config.num_key_value_heads,
+            block_size=block_size,
+            head_dim=config.head_dim,
+            dtype=DTYPE,
+            device=DEVICE,
+        )
+        cache_manager = KVCacheManager(
+            block_size=block_size,
+            block_pool=block_pool,
+            paged_kv_cache=paged_kv_cache,
+        )
 
     return Engine(
         model=model,
@@ -70,6 +73,11 @@ def main() -> None:
     parser.add_argument("--max-new-tokens", type=int, default=500)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-p", type=float, default=0.9)
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="use full-sequence recomputation as a correctness reference",
+    )
     args = parser.parse_args()
 
     if args.max_new_tokens < 0:
@@ -80,7 +88,7 @@ def main() -> None:
     print("=" * 60)
     print(f"\n  device:       {DEVICE}")
     print(f"  dtype:        {DTYPE}")
-    print("  cache:        paged")
+    print(f"  cache:        {'off' if args.no_cache else 'paged'}")
     print(f"  prompt:       {args.prompt}")
 
     print("\n[1/4] Loading tokenizer...")
@@ -92,7 +100,7 @@ def main() -> None:
     print("\n[2/4] Loading model...")
     start = time.perf_counter()
     config = load_config(MODEL_ID)
-    engine = build_engine(config)
+    engine = build_engine(config, use_cache=not args.no_cache)
     print(f"  parameters:   {sum(p.numel() for p in engine.model.parameters()):,}")
     print(f"  time:         {time.perf_counter() - start:.3f}s")
 
@@ -133,6 +141,7 @@ def main() -> None:
         top_p=args.top_p,
         eos_ids=eos_ids,
         on_token=on_token,
+        use_cache=not args.no_cache,
     )
     sync()
 
