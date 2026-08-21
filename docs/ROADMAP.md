@@ -28,7 +28,7 @@ BareLLM is an understanding-first inference engine. Each milestone should be imp
 - [x] Support MQA through `num_kv_heads=1`
 - [x] Verify MHA/GQA equivalence when query and KV head counts match
 - [x] Implement transformer blocks with pre-normalization and residuals
-- [x] Implement a generic decoder-only causal language model
+- [x] Implement a Qwen3-compatible decoder-only causal language model
 - [x] Add final RMSNorm and LM head
 - [x] Verify causal masking and full-sequence logits
 
@@ -51,7 +51,7 @@ BareLLM is an understanding-first inference engine. Each milestone should be imp
 - [x] Implement one-token decode cache updates
 - [x] Track per-request logical sequence positions
 - [x] Verify cached decode against full recomputation
-- [ ] Extend cache tests to MHA, GQA, and MQA layouts
+- [x] Extend cache tests to MHA, GQA, and MQA layouts
 
 ## Level 4 — Paged KV cache
 
@@ -62,10 +62,10 @@ BareLLM is an understanding-first inference engine. Each milestone should be imp
 - [x] Implement block-table gathering
 - [x] Support unequal sequence lengths with padding masks
 - [x] Test multi-layer and multi-request cache behavior
-- [ ] Test block exhaustion, freeing, and reuse
+- [x] Test block exhaustion, freeing, and reuse
 - [x] Integrate paged cache with attention
 
-The first paged implementation may gather K/V into dense tensors before SDPA. Direct paged attention is a later optimization.
+The current paged implementation gathers K/V into dense tensors before SDPA. Direct paged attention is a later optimization.
 
 ## Level 5 — Generation and continuous batching
 
@@ -73,7 +73,7 @@ The first paged implementation may gather K/V into dense tensors before SDPA. Di
 - [ ] Support cached and no-cache generation paths
 - [x] Complete batched decode with per-request positions
 - [ ] Enforce maximum batch size and KV capacity during admission
-- [ ] Free blocks when requests finish
+- [x] Free blocks when requests finish
 - [x] Test mixed prompt lengths and generation limits
 - [ ] Test callbacks, aborts, EOS, stop strings, deadlines, and zero-token requests
 - [ ] Add end-to-end prompt-to-token tests

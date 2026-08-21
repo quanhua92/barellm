@@ -30,9 +30,16 @@ BareLLM can load a Qwen3-compatible checkpoint and generate text using:
 - Qwen3 embeddings, RMSNorm, RoPE, SwiGLU, GQA, and tied LM head;
 - contiguous KV cache as a reference implementation;
 - paged KV cache with fixed-size physical blocks;
-- one-token batched decode with unequal request lengths and padding masks.
+- one-token batched decode with unequal request lengths and padding masks;
+- MHA, GQA, and MQA cache-equivalence coverage across contiguous and paged
+  storage.
 
 The current paged backend gathers pages into dense tensors before PyTorch SDPA. Direct paged attention is a future optimization.
+
+The current SDPA contract and its prefill/decode masking rules are documented
+in [`docs/SDPA.md`](docs/SDPA.md).
+The cache protocols, storage backends, block ownership, and request lifecycle
+are documented in [`docs/CACHE.md`](docs/CACHE.md).
 
 ## Run the demos
 
