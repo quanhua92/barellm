@@ -63,6 +63,11 @@ stream used for request debugging. Its duration events cover engine steps,
 prefill, and decode batches. Instant events mark admission, cache ownership,
 generated tokens, request completion, and stalls.
 
+Chrome Trace slice durations use the emitted start/end timestamps so nested
+engine, model-forward, and sampling spans remain valid on Perfetto tracks.
+Device-synchronized measurements remain available in the slice arguments as
+`measured_duration_seconds`.
+
 ## Interpreting the files
 
 - Use `metrics.json` for stable aggregate values such as TTFT, prefill

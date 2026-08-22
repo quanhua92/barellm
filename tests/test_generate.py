@@ -8,10 +8,13 @@ from torch import nn
 from barellm.engine.block_pool import BlockPool
 from barellm.engine.engine import Engine
 from barellm.engine.events import (
+    CacheAllocated,
     DecodeBatchEnd,
+    ModelForwardEnd,
     PrefillEnd,
     RequestFinished,
     RequestSubmitted,
+    SamplingEnd,
     TokenGenerated,
 )
 from barellm.engine.generate import GenerationResult, generate
@@ -136,6 +139,23 @@ def test_generate_emits_lifecycle_events_and_metrics(use_cache: bool) -> None:
     assert len([event for event in events if isinstance(event, RequestSubmitted)]) == 1
     assert len([event for event in events if isinstance(event, PrefillEnd)]) == 1
     assert len([event for event in events if isinstance(event, DecodeBatchEnd)]) == 2
+    model_forwards = [event for event in events if isinstance(event, ModelForwardEnd)]
+    samplings = [event for event in events if isinstance(event, SamplingEnd)]
+    assert [event.phase for event in model_forwards] == [
+        "prefill",
+        "decode",
+        "decode",
+    ]
+    assert [event.phase for event in samplings] == [
+        "prefill",
+        "decode",
+        "decode",
+    ]
+    cache_allocated = [event for event in events if isinstance(event, CacheAllocated)]
+    if use_cache:
+        assert [len(event.block_ids) for event in cache_allocated] == [2, 1]
+    else:
+        assert cache_allocated == []
     tokens = [event for event in events if isinstance(event, TokenGenerated)]
     finished = [event for event in events if isinstance(event, RequestFinished)]
     assert len(tokens) == 3

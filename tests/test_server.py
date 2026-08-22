@@ -60,6 +60,8 @@ def test_profile_api_discovers_metrics_and_trace(tmp_path: Path) -> None:
     assert "keepApiOpen: true" in javascript
     assert "if (run.files.engine_trace) await openTrace('engine')" in javascript
     assert "Time to first token" in dashboard
+    assert 'class="panel recent-panel"' in dashboard
+    assert 'class="panel sidebar"' not in dashboard
     assert "Raw metrics JSON" in dashboard
     assert "@media (max-width: 520px)" in stylesheet
 

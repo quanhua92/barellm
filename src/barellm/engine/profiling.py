@@ -17,14 +17,20 @@ from barellm.engine.events import (
     EngineStepEnd,
     EngineStepStart,
     GenerationMetrics,
+    ModelForwardEnd,
+    ModelForwardStart,
     PrefillEnd,
     PrefillStart,
+    SamplingEnd,
+    SamplingStart,
 )
 
 _PHASE_PAIRS = (
     (EngineStepStart, EngineStepEnd, "engine_step"),
     (PrefillStart, PrefillEnd, "prefill"),
     (DecodeBatchStart, DecodeBatchEnd, "decode_batch"),
+    (ModelForwardStart, ModelForwardEnd, "model_forward"),
+    (SamplingStart, SamplingEnd, "sampling"),
 )
 
 
@@ -157,6 +163,16 @@ class TraceRecorder:
             return event.request_id
         if isinstance(event, (DecodeBatchStart, DecodeBatchEnd)):
             return event.request_ids
+        if isinstance(
+            event,
+            (
+                ModelForwardStart,
+                ModelForwardEnd,
+                SamplingStart,
+                SamplingEnd,
+            ),
+        ):
+            return (event.phase, event.request_ids)
         return "engine"
 
     def _duration_event(
@@ -166,12 +182,15 @@ class TraceRecorder:
         end: EngineEvent,
         base_timestamp: float,
     ) -> dict[str, object]:
+        # Chrome Trace slices must use the event timestamps. A measured
+        # duration can include device synchronization that happened between
+        # emitting the start and end events, which can otherwise create
+        # partially overlapping slices on one Perfetto track.
+        duration = max(end.timestamp - start.timestamp, 0.0)
         measured_duration = getattr(end, "duration_seconds", None)
-        duration = (
-            float(measured_duration)
-            if measured_duration is not None
-            else max(end.timestamp - start.timestamp, 0.0)
-        )
+        end_args = self._event_args(end)
+        if measured_duration is not None:
+            end_args["measured_duration_seconds"] = float(measured_duration)
         return {
             "name": name,
             "cat": "barellm.engine",
@@ -182,7 +201,7 @@ class TraceRecorder:
             "dur": duration * 1_000_000,
             "args": {
                 "start": self._event_args(start),
-                "end": self._event_args(end),
+                "end": end_args,
             },
         }
 

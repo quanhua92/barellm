@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime
 
+import pytest
 import torch
 
 from barellm.engine.events import (
@@ -100,6 +101,47 @@ def test_trace_recorder_exports_chrome_trace(tmp_path) -> None:
     assert "token_generated" in names
     duration_events = [event for event in payload["traceEvents"] if event["ph"] == "X"]
     assert all(event["dur"] >= 0 for event in duration_events)
+
+
+def test_trace_slices_use_timestamps_and_do_not_partially_overlap(tmp_path) -> None:
+    events = make_events()
+    prefill_end = next(event for event in events if isinstance(event, PrefillEnd))
+    prefill_end = PrefillEnd(
+        timestamp=prefill_end.timestamp,
+        step=prefill_end.step,
+        request_id=prefill_end.request_id,
+        prompt_tokens=prefill_end.prompt_tokens,
+        use_cache=prefill_end.use_cache,
+        duration_seconds=0.2,
+    )
+    events[3] = prefill_end
+
+    recorder = TraceRecorder()
+    for event in events:
+        recorder(event)
+    payload = json.loads(
+        recorder.export_chrome_trace(tmp_path / "nested.trace.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    slices = sorted(
+        (event for event in payload["traceEvents"] if event["ph"] == "X"),
+        key=lambda event: event["ts"],
+    )
+
+    for index, left in enumerate(slices):
+        left_end = left["ts"] + left["dur"]
+        for right in slices[index + 1 :]:
+            right_end = right["ts"] + right["dur"]
+            partial_overlap = (
+                left["ts"] < right["ts"] < left_end < right_end
+                or right["ts"] < left["ts"] < right_end < left_end
+            )
+            assert not partial_overlap
+
+    prefill = next(event for event in slices if event["name"] == "prefill")
+    assert prefill["dur"] == pytest.approx(100_000)
+    assert prefill["args"]["end"]["measured_duration_seconds"] == 0.2
 
 
 def test_trace_recorder_exports_metrics_json(tmp_path) -> None:

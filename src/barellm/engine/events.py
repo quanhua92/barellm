@@ -21,6 +21,10 @@ class EventKind(str, Enum):
     TOKEN_GENERATED = "token_generated"
     REQUEST_FINISHED = "request_finished"
     ENGINE_STALLED = "engine_stalled"
+    MODEL_FORWARD_START = "model_forward_start"
+    MODEL_FORWARD_END = "model_forward_end"
+    SAMPLING_START = "sampling_start"
+    SAMPLING_END = "sampling_end"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -104,6 +108,42 @@ class DecodeBatchEnd(EngineEvent):
     kind: ClassVar[EventKind] = EventKind.DECODE_BATCH_END
     request_ids: tuple[str, ...]
     use_cache: bool
+    duration_seconds: float
+
+
+@dataclass(frozen=True, kw_only=True)
+class ModelForwardStart(EngineEvent):
+    kind: ClassVar[EventKind] = EventKind.MODEL_FORWARD_START
+    phase: str
+    request_ids: tuple[str, ...]
+    batch_size: int
+    input_tokens: int
+    sequence_lengths: tuple[int, ...]
+    use_cache: bool
+
+
+@dataclass(frozen=True, kw_only=True)
+class ModelForwardEnd(EngineEvent):
+    kind: ClassVar[EventKind] = EventKind.MODEL_FORWARD_END
+    phase: str
+    request_ids: tuple[str, ...]
+    duration_seconds: float
+
+
+@dataclass(frozen=True, kw_only=True)
+class SamplingStart(EngineEvent):
+    kind: ClassVar[EventKind] = EventKind.SAMPLING_START
+    phase: str
+    request_ids: tuple[str, ...]
+    batch_size: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class SamplingEnd(EngineEvent):
+    kind: ClassVar[EventKind] = EventKind.SAMPLING_END
+    phase: str
+    request_ids: tuple[str, ...]
+    batch_size: int
     duration_seconds: float
 
 

@@ -14,11 +14,14 @@
     <div class="brand"><div class="brand-mark" aria-hidden="true">B</div><div><p class="brand-name">BareLLM</p><p class="brand-subtitle">Inference observability</p></div></div>
     <div class="status"><span class="status-dot" aria-hidden="true"></span>Local profile server</div>
   </header>
-  <main class="layout" id="workspace">
-    <aside class="panel sidebar" aria-labelledby="runs-heading">
-      <div class="sidebar-heading"><h2 id="runs-heading">Recent runs</h2><span class="count" id="run-count">Loading…</span></div>
+  <main id="workspace">
+    <section class="panel recent-panel" aria-labelledby="runs-heading">
+      <div class="recent-heading">
+        <div><h2 id="runs-heading">Recent runs</h2><p class="recent-subtitle">Newest first</p></div>
+        <span class="count" id="run-count">Loading…</span>
+      </div>
       <div class="run-list" id="run-list" aria-live="polite"><p class="empty">Loading runs…</p></div>
-    </aside>
+    </section>
     <section class="workspace" aria-labelledby="run-title">
       <div class="workspace-header">
         <div><p class="eyebrow">Selected run</p><h1 id="run-title">Loading profile…</h1><p class="run-meta" id="run-meta"></p></div>

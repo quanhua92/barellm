@@ -44,12 +44,16 @@ For a normal single request, the important order is:
 ```text
 RequestSubmitted
   EngineStepStart
-    CacheAllocated       (cached mode)
+    CacheAllocated       (cached mode, only when new blocks are added)
     RequestAdmitted
     PrefillStart
+      ModelForwardStart/End (phase=prefill)
+      SamplingStart/End    (phase=prefill)
     PrefillEnd
     TokenGenerated       (first token)
     DecodeBatchStart     (once per decode iteration)
+      ModelForwardStart/End (phase=decode)
+      SamplingStart/End    (phase=decode)
     DecodeBatchEnd
     TokenGenerated
     ...
@@ -65,6 +69,16 @@ enough cache blocks. If no request can make progress, it emits
 In batched decode, one `DecodeBatchStart`/`DecodeBatchEnd` pair contains a
 tuple of request IDs. Each request still receives its own `TokenGenerated`
 and `RequestFinished` events.
+
+`CacheAllocated` is emitted only when the manager grows a request's physical
+block table. A successful cache-capacity check that adds zero blocks emits no
+event; `block_ids` contains only the newly allocated physical block IDs.
+
+`ModelForwardStart`/`ModelForwardEnd` isolate the model call from the larger
+prefill or decode phase. `SamplingStart`/`SamplingEnd` isolate token selection
+from model execution. Their `phase`, `request_ids`, and batch metadata make
+the distinction visible in a trace without emitting one event per transformer
+layer or token.
 
 The concrete event classes are in `barellm.engine.events`. Every event has:
 

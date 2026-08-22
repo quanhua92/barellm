@@ -15,11 +15,15 @@ from barellm.engine.events import (
     EngineStepEnd,
     EngineStepStart,
     EventCallback,
+    ModelForwardEnd,
+    ModelForwardStart,
     PrefillEnd,
     PrefillStart,
     RequestAdmitted,
     RequestFinished,
     RequestSubmitted,
+    SamplingEnd,
+    SamplingStart,
     TimingConfig,
     TokenGenerated,
 )
@@ -69,20 +73,39 @@ class Engine:
         self,
         req: Request,
         callback: EventCallback | None,
+        block_ids: tuple[int, ...],
     ) -> None:
-        if self.kv_cache_manager is None:
+        if self.kv_cache_manager is None or not block_ids:
             return
-        blocks = self.kv_cache_manager.request_id_to_blocks.get(req.id, [])
         self._emit(
             callback,
             CacheAllocated(
                 timestamp=time.perf_counter(),
                 step=self.step_count,
                 request_id=req.id,
-                block_ids=tuple(block.block_id for block in blocks),
+                block_ids=block_ids,
                 sequence_length=req.seq_len,
             ),
         )
+
+    def _allocate_request(
+        self,
+        req: Request,
+        callback: EventCallback | None,
+    ) -> bool:
+        """Allocate newly needed blocks and emit only real allocations."""
+        if self.kv_cache_manager is None:
+            raise ValueError("cached execution requires a KV cache manager")
+        existing_blocks = self.kv_cache_manager.request_id_to_blocks.get(req.id, [])
+        existing_count = len(existing_blocks)
+        if not self.kv_cache_manager.allocate_request(req):
+            return False
+        current_blocks = self.kv_cache_manager.request_id_to_blocks.get(req.id, [])
+        new_block_ids = tuple(
+            block.block_id for block in current_blocks[existing_count:]
+        )
+        self._emit_cache_allocated(req, callback, new_block_ids)
+        return True
 
     def _free_cache(
         self,
@@ -211,12 +234,65 @@ class Engine:
                 raise ValueError("cached execution requires a KV cache manager")
             cache = self.kv_cache_manager.get_cache(req)
 
+        request_ids = (req.id,)
+        self._emit(
+            callback,
+            ModelForwardStart(
+                timestamp=time.perf_counter(),
+                step=self.step_count,
+                request_id=req.id,
+                phase="prefill",
+                request_ids=request_ids,
+                batch_size=1,
+                input_tokens=req.seq_len,
+                sequence_lengths=(req.seq_len,),
+                use_cache=use_cache,
+            ),
+        )
+        model_started_at = self._phase_start(timing)
         logits = self.model(
             req.token_ids,
             position_ids=position_ids,
             kv_cache=cache,
         )
+        model_duration = self._phase_end(model_started_at, timing)
+        self._emit(
+            callback,
+            ModelForwardEnd(
+                timestamp=time.perf_counter(),
+                step=self.step_count,
+                request_id=req.id,
+                phase="prefill",
+                request_ids=request_ids,
+                duration_seconds=model_duration,
+            ),
+        )
+        self._emit(
+            callback,
+            SamplingStart(
+                timestamp=time.perf_counter(),
+                step=self.step_count,
+                request_id=req.id,
+                phase="prefill",
+                request_ids=request_ids,
+                batch_size=1,
+            ),
+        )
+        sampling_started_at = self._phase_start(timing)
         next_token = sample(logits[:, -1, :], req.temperature, req.top_k, req.top_p)
+        sampling_duration = self._phase_end(sampling_started_at, timing)
+        self._emit(
+            callback,
+            SamplingEnd(
+                timestamp=time.perf_counter(),
+                step=self.step_count,
+                request_id=req.id,
+                phase="prefill",
+                request_ids=request_ids,
+                batch_size=1,
+                duration_seconds=sampling_duration,
+            ),
+        )
         duration = self._phase_end(started_at, timing)
         self._emit(
             callback,
@@ -267,16 +343,68 @@ class Engine:
                     dtype=torch.long,
                     device=self.device,
                 ).unsqueeze(0)
+                self._emit(
+                    callback,
+                    ModelForwardStart(
+                        timestamp=time.perf_counter(),
+                        step=self.step_count,
+                        request_id=req.id,
+                        phase="decode",
+                        request_ids=request_ids,
+                        batch_size=1,
+                        input_tokens=1,
+                        sequence_lengths=(req.seq_len,),
+                        use_cache=False,
+                    ),
+                )
+                model_started_at = self._phase_start(timing)
                 logits = self.model(
                     req.token_ids,
                     position_ids=position_ids,
                     kv_cache=None,
                 )
+                model_duration = self._phase_end(model_started_at, timing)
+                self._emit(
+                    callback,
+                    ModelForwardEnd(
+                        timestamp=time.perf_counter(),
+                        step=self.step_count,
+                        request_id=req.id,
+                        phase="decode",
+                        request_ids=request_ids,
+                        duration_seconds=model_duration,
+                    ),
+                )
+                self._emit(
+                    callback,
+                    SamplingStart(
+                        timestamp=time.perf_counter(),
+                        step=self.step_count,
+                        request_id=req.id,
+                        phase="decode",
+                        request_ids=request_ids,
+                        batch_size=1,
+                    ),
+                )
+                sampling_started_at = self._phase_start(timing)
                 token = sample(
                     logits[:, -1, :],
                     req.temperature,
                     req.top_k,
                     req.top_p,
+                )
+                sampling_duration = self._phase_end(sampling_started_at, timing)
+                self._emit(
+                    callback,
+                    SamplingEnd(
+                        timestamp=time.perf_counter(),
+                        step=self.step_count,
+                        request_id=req.id,
+                        phase="decode",
+                        request_ids=request_ids,
+                        batch_size=1,
+                        duration_seconds=sampling_duration,
+                    ),
                 )
                 duration = self._phase_end(started_at, timing)
                 self._emit(
@@ -298,8 +426,7 @@ class Engine:
 
         decodable = []
         for req in active:
-            if self.kv_cache_manager.allocate_request(req):
-                self._emit_cache_allocated(req, callback)
+            if self._allocate_request(req, callback):
                 decodable.append(req)
             else:
                 self._emit(
@@ -340,11 +467,47 @@ class Engine:
         batch_cache = BatchKVCache(
             [self.kv_cache_manager.get_cache(req) for req in active]
         )
+        self._emit(
+            callback,
+            ModelForwardStart(
+                timestamp=time.perf_counter(),
+                step=self.step_count,
+                phase="decode",
+                request_ids=request_ids,
+                batch_size=len(active),
+                input_tokens=1,
+                sequence_lengths=tuple(req.seq_len for req in active),
+                use_cache=True,
+            ),
+        )
+        model_started_at = self._phase_start(timing)
         logits = self.model(
             input_ids,
             position_ids=position_ids,
             kv_cache=batch_cache,
         )
+        model_duration = self._phase_end(model_started_at, timing)
+        self._emit(
+            callback,
+            ModelForwardEnd(
+                timestamp=time.perf_counter(),
+                step=self.step_count,
+                phase="decode",
+                request_ids=request_ids,
+                duration_seconds=model_duration,
+            ),
+        )
+        self._emit(
+            callback,
+            SamplingStart(
+                timestamp=time.perf_counter(),
+                step=self.step_count,
+                phase="decode",
+                request_ids=request_ids,
+                batch_size=len(active),
+            ),
+        )
+        sampling_started_at = self._phase_start(timing)
         tokens = [
             sample(
                 logits[row : row + 1, -1, :],
@@ -354,6 +517,18 @@ class Engine:
             )
             for row, req in enumerate(active)
         ]
+        sampling_duration = self._phase_end(sampling_started_at, timing)
+        self._emit(
+            callback,
+            SamplingEnd(
+                timestamp=time.perf_counter(),
+                step=self.step_count,
+                phase="decode",
+                request_ids=request_ids,
+                batch_size=len(active),
+                duration_seconds=sampling_duration,
+            ),
+        )
         duration = self._phase_end(started_at, timing)
         self._emit(
             callback,
@@ -407,7 +582,7 @@ class Engine:
             if use_cache:
                 if self.kv_cache_manager is None:
                     raise ValueError("cached execution requires a KV cache manager")
-                if not self.kv_cache_manager.allocate_request(req):
+                if not self._allocate_request(req, callback):
                     self._emit(
                         callback,
                         AdmissionBlocked(
@@ -419,7 +594,6 @@ class Engine:
                         ),
                     )
                     break
-                self._emit_cache_allocated(req, callback)
             self.scheduler.pop_request(req)
             self._emit(
                 callback,
