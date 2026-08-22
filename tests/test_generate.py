@@ -122,6 +122,28 @@ def test_generate_returns_result_and_generated_view() -> None:
     assert result.finish_reason == "length"
 
 
+def test_generate_cached_path_prefills_then_decodes_one_token_at_a_time() -> None:
+    model = FixedTokenModel(5)
+    engine = make_engine()
+    engine.model = model
+    result = generate(
+        engine,
+        torch.tensor([[1, 2, 3]]),
+        max_new_tokens=2,
+        temperature=0.0,
+        eos_ids=set(),
+    )
+
+    assert result.token_ids.tolist() == [[1, 2, 3, 5, 5]]
+    assert result.prompt_length == 3
+    assert result.generated_token_ids.tolist() == [[5, 5]]
+    assert result.generated_count == 2
+    assert result.finish_reason == "length"
+    assert model.input_lengths == [3, 1]
+    assert model.position_ids == [[0, 1, 2], [3]]
+    assert model.cache_was_none == [False, False]
+
+
 @pytest.mark.parametrize("use_cache", [True, False])
 def test_generate_emits_lifecycle_events_and_metrics(use_cache: bool) -> None:
     events = []

@@ -6,13 +6,13 @@ from torch import nn
 
 from barellm.engine.block_pool import BlockPool
 from barellm.engine.engine import Engine
-from barellm.engine.events import RequestFinished, TokenGenerated
+from barellm.engine.events import DecodeBatchStart, RequestFinished, TokenGenerated
 from barellm.engine.kv_cache_manager import KVCacheManager
 from barellm.engine.paged_kv_cache import PagedKVCache
 from barellm.engine.request import Request
 from barellm.engine.scheduler import Scheduler
 from barellm.models.qwen3 import Qwen3ForCausalLM
-from barellm.sampling.stops import FINISH_ABORT, FINISH_STOP
+from barellm.sampling.stops import FINISH_ABORT, FINISH_LENGTH, FINISH_STOP
 
 
 class TinyEngineModel(nn.Module):
@@ -186,6 +186,60 @@ class TestEngine:
             assert request.generated_count == 2
             assert request.finish_reason == "length"
             assert request.id not in kv_cache_manager.request_id_to_blocks
+
+    def test_batched_requests_finish_independently_and_release_cache(self):
+        model = FixedTokenModel([7])
+        scheduler = Scheduler(max_batch=2)
+        first = Request(
+            id="eos-first",
+            token_ids=torch.tensor([[1, 2]]),
+            max_new_tokens=4,
+            eos_ids={7},
+            temperature=0.0,
+        )
+        second = Request(
+            id="length-second",
+            token_ids=torch.tensor([[3, 4, 5]]),
+            max_new_tokens=3,
+            temperature=0.0,
+        )
+        scheduler.add_request(first)
+        scheduler.add_request(second)
+
+        block_size = 2
+        block_pool = BlockPool(8)
+        paged_kv_cache = PagedKVCache(
+            num_layers=1,
+            max_blocks=8,
+            num_kv_heads=1,
+            block_size=block_size,
+            head_dim=1,
+        )
+        manager = KVCacheManager(block_size, block_pool, paged_kv_cache)
+        events = []
+        engine = Engine(model, scheduler, manager)
+
+        engine.run(on_event=events.append)
+
+        assert first.token_ids.tolist() == [[1, 2, 7]]
+        assert first.generated_count == 1
+        assert first.finish_reason == FINISH_STOP
+        assert first.stop_reason == 7
+        assert second.token_ids.tolist() == [[3, 4, 5, 7, 7, 7]]
+        assert second.generated_count == 3
+        assert second.finish_reason == FINISH_LENGTH
+        assert second.stop_reason is None
+
+        decode_batches = [
+            event for event in events if isinstance(event, DecodeBatchStart)
+        ]
+        assert decode_batches
+        assert all(event.request_ids == ("length-second",) for event in decode_batches)
+        assert first.id not in manager.request_id_to_blocks
+        assert second.id not in manager.request_id_to_blocks
+        assert first.id not in paged_kv_cache.request_pages
+        assert second.id not in paged_kv_cache.request_pages
+        assert len(block_pool.free_ids) == len(block_pool.blocks)
 
     def test_decode_skips_request_when_no_block_is_available(self):
         model = TinyEngineModel()
