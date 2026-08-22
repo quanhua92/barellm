@@ -1,8 +1,11 @@
+from typing import cast
+
 import pytest
 import torch
 
+from barellm.engine.batched_kv_cache import BatchKVCache, BatchLayerKV
 from barellm.engine.block_pool import BlockPool
-from barellm.engine.paged_kv_cache import PagedKVCache
+from barellm.engine.paged_kv_cache import PagedKVCache, PagedLayerKV
 
 
 def make_storage(
@@ -25,7 +28,7 @@ def make_storage(
 def test_paged_append_gathers_across_block_boundary() -> None:
     storage, pool = make_storage(block_size=2)
     storage.register_request("A", pool.allocate(2))
-    layer = storage.get_cache("A").layer(0)
+    layer = cast(PagedLayerKV, storage.get_cache("A").layer(0))
 
     key = torch.arange(18, dtype=torch.float32).reshape(1, 2, 3, 3)
     value = key + 100
@@ -36,6 +39,41 @@ def test_paged_append_gathers_across_block_boundary() -> None:
     torch.testing.assert_close(returned_key, key)
     torch.testing.assert_close(returned_value, value)
     torch.testing.assert_close(layer.read(), (key, value))
+
+
+def test_append_only_matches_legacy_append_and_exposes_metadata() -> None:
+    storage, pool = make_storage(block_size=2)
+    storage.register_request("A", pool.allocate(2))
+    layer = cast(PagedLayerKV, storage.get_cache("A").layer(0))
+
+    key = torch.arange(18, dtype=torch.float32).reshape(1, 2, 3, 3)
+    value = key + 100
+    layer.append_only(key, value)
+
+    metadata = layer.paged_metadata_post_append()
+    assert metadata.seq_len == 3
+    assert metadata.block_size == 2
+    assert metadata.layer_idx == 0
+    assert metadata.block_table.dtype == torch.int32
+    torch.testing.assert_close(layer.read(), (key, value))
+
+
+def test_batched_paged_metadata_is_rectangular_and_device_resident() -> None:
+    storage, pool = make_storage(block_size=2, max_blocks=4)
+    storage.register_request("A", pool.allocate(1))
+    storage.register_request("B", pool.allocate(2))
+    batch = BatchKVCache([storage.get_cache("A"), storage.get_cache("B")])
+    layer = cast(BatchLayerKV, batch.layer(0))
+    layer.append_only(
+        torch.randn(2, 2, 1, 3),
+        torch.randn(2, 2, 1, 3),
+    )
+
+    metadata = layer.paged_metadata_post_append()
+    assert metadata.block_tables.shape == (2, 2)
+    assert metadata.block_tables.dtype == torch.int32
+    assert metadata.seq_lens.tolist() == [1, 1]
+    assert metadata.block_tables.device == storage.device
 
 
 def test_paged_append_writes_new_token_after_boundary() -> None:

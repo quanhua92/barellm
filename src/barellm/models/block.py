@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 
+from barellm.attention import AttentionBackendName
 from barellm.models.attention import CausalSelfAttention, GroupedQueryAttention
 from barellm.models.cache import KVCache
 from barellm.models.mlp import SwiGLU
@@ -19,6 +20,7 @@ class TransformerBlock(nn.Module):
         rms_norm_eps: float = 1e-6,
         rope_theta: float = 1_000_000.0,
         use_qk_norm: bool = False,
+        attention_backend: AttentionBackendName = "sdpa",
     ):
         super().__init__()
         check(hidden_size > 0, "hidden_size must be positive")
@@ -37,6 +39,7 @@ class TransformerBlock(nn.Module):
                 rope_theta=rope_theta,
                 use_qk_norm=use_qk_norm,
                 rms_norm_eps=rms_norm_eps,
+                attention_backend=attention_backend,
             )
         else:
             self.self_attn = CausalSelfAttention(
@@ -46,6 +49,7 @@ class TransformerBlock(nn.Module):
                 rope_theta=rope_theta,
                 use_qk_norm=use_qk_norm,
                 rms_norm_eps=rms_norm_eps,
+                attention_backend=attention_backend,
             )
 
         self.mlp = SwiGLU(hidden_size=hidden_size, intermediate_size=intermediate_size)

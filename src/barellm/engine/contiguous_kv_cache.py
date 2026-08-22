@@ -22,6 +22,10 @@ class ContiguousLayerKV:
     def append(
         self, key: torch.Tensor, value: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        self.append_only(key, value)
+        return self.read()
+
+    def append_only(self, key: torch.Tensor, value: torch.Tensor) -> None:
         check(key.ndim == 4 and value.ndim == 4, "K/V must have shape [B, H, T, D]")
         check(key.shape == value.shape, "K/V must have identical shape")
         check(key.shape[2] > 0, "K/V sequence length must be greater than zero")
@@ -31,7 +35,7 @@ class ContiguousLayerKV:
         if self.key is None:
             self.key = key
             self.value = value
-            return self.key, self.value
+            return
 
         if self.value is None:
             raise RuntimeError("key/value cache state is inconsistent")
@@ -42,7 +46,6 @@ class ContiguousLayerKV:
         check(key.device == self.key.device, "K/V device cannot change")
         self.key = torch.cat([self.key, key], dim=2)
         self.value = torch.cat([self.value, value], dim=2)
-        return self.key, self.value
 
     def read(self) -> tuple[torch.Tensor, torch.Tensor]:
         if self.key is None or self.value is None:

@@ -1,5 +1,9 @@
 import torch
 
+from barellm.engine.paged_kv_cache import (
+    PagedBatchKVMetadata,
+    PagedLayerKV,
+)
 from barellm.models.cache import KVCache, LayerKV
 from barellm.utils import check
 
@@ -23,13 +27,21 @@ class BatchLayerKV:
 
     @property
     def seq_len(self) -> int:
-        return int(self.lengths.max().item())
+        return max(layer.seq_len for layer in self.layers)
 
     def append(
         self,
         key: torch.Tensor,
         value: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        self.append_only(key, value)
+        return self.read()
+
+    def append_only(
+        self,
+        key: torch.Tensor,
+        value: torch.Tensor,
+    ) -> None:
         check(
             key.shape[0] == len(self.layers),
             "batch size must match number of caches",
@@ -38,20 +50,17 @@ class BatchLayerKV:
             value.shape[0] == len(self.layers),
             "batch size must match number of caches",
         )
-        keys = []
-        values = []
-        lengths = []
         for batch_idx, layer in enumerate(self.layers):
-            cached_key, cached_value = layer.append(
+            layer.append_only(
                 key[batch_idx : batch_idx + 1],
                 value[batch_idx : batch_idx + 1],
             )
-            keys.append(cached_key)
-            values.append(cached_value)
-            lengths.append(cached_key.shape[2])
 
-        self.lengths = torch.tensor(lengths, device=key.device)
-        return self._pad(keys), self._pad(values)
+        self.lengths = torch.tensor(
+            [layer.seq_len for layer in self.layers],
+            dtype=torch.long,
+            device=key.device,
+        )
 
     def read(self) -> tuple[torch.Tensor, torch.Tensor]:
         keys = []
@@ -86,8 +95,51 @@ class BatchLayerKV:
         return result
 
     def attention_mask(self, q_len: int) -> torch.Tensor:
-        max_len = int(self.lengths.max().item())
+        max_len = max(layer.seq_len for layer in self.layers)
         valid_keys = torch.arange(max_len, device=self.lengths.device).unsqueeze(
             0
         ) < self.lengths.unsqueeze(1)
         return valid_keys[:, None, None, :].expand(-1, 1, q_len, -1)
+
+    def paged_metadata_post_append(self) -> PagedBatchKVMetadata:
+        """Build checked rectangular metadata for homogeneous paged layers."""
+        if not all(isinstance(layer, PagedLayerKV) for layer in self.layers):
+            raise TypeError("paged metadata requires PagedLayerKV members")
+
+        paged_layers = [
+            layer for layer in self.layers if isinstance(layer, PagedLayerKV)
+        ]
+        metadata = [layer.paged_metadata_post_append() for layer in paged_layers]
+        first = metadata[0]
+        if any(
+            item.key_cache is not first.key_cache
+            or item.value_cache is not first.value_cache
+            or item.layer_idx != first.layer_idx
+            or item.block_size != first.block_size
+            for item in metadata[1:]
+        ):
+            raise ValueError("paged batch layers must share storage and layout")
+
+        max_blocks = max(item.block_table.numel() for item in metadata)
+        block_tables = torch.full(
+            (len(metadata), max_blocks),
+            -1,
+            dtype=torch.int32,
+            device=first.block_table.device,
+        )
+        for row, item in enumerate(metadata):
+            block_tables[row, : item.block_table.numel()] = item.block_table
+
+        seq_lens = torch.tensor(
+            [item.seq_len for item in metadata],
+            dtype=torch.int32,
+            device=first.block_table.device,
+        )
+        return PagedBatchKVMetadata(
+            key_cache=first.key_cache,
+            value_cache=first.value_cache,
+            layer_idx=first.layer_idx,
+            block_tables=block_tables,
+            seq_lens=seq_lens,
+            block_size=first.block_size,
+        )

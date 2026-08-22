@@ -1,5 +1,6 @@
 import torch
 
+from barellm.attention import AttentionBackendName
 from barellm.config import DEVICE, DTYPE, MODEL_ID
 from barellm.engine.block_pool import BlockPool
 from barellm.engine.engine import Engine
@@ -19,10 +20,14 @@ def load_qwen3_engine(
     num_blocks: int = 256,
     device: str = DEVICE,
     dtype: torch.dtype = DTYPE,
+    attention_backend: AttentionBackendName = "sdpa",
 ) -> tuple[Qwen3Config, Engine]:
     """Load a Qwen3 checkpoint and construct a BareLLM engine."""
     config = load_config(model_id)
-    model = Qwen3ForCausalLM.from_config(config)
+    model = Qwen3ForCausalLM.from_config(
+        config,
+        attention_backend=attention_backend,
+    )
     model.to(device=device, dtype=dtype)
 
     weights = load_weights(model_id, device=device, dtype=dtype)

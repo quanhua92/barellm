@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, fields
 import torch
 from torch import nn
 
+from barellm.attention import AttentionBackendName
 from barellm.config import MODEL_ID
 from barellm.hub import download_model
 from barellm.models.block import TransformerBlock
@@ -93,6 +94,7 @@ class Qwen3ForCausalLM(nn.Module):
         rope_theta: float = 1_000_000.0,
         use_qk_norm: bool = False,
         rms_norm_eps: float = 1e-6,
+        attention_backend: AttentionBackendName = "sdpa",
     ) -> None:
         super().__init__()
         self.embed_tokens = TokenEmbedding(
@@ -109,6 +111,7 @@ class Qwen3ForCausalLM(nn.Module):
                     rms_norm_eps=rms_norm_eps,
                     rope_theta=rope_theta,
                     use_qk_norm=use_qk_norm,
+                    attention_backend=attention_backend,
                 )
                 for _ in range(num_layers)
             ]
@@ -117,7 +120,11 @@ class Qwen3ForCausalLM(nn.Module):
         self.lm_head = TiedLMHead(self.embed_tokens)
 
     @classmethod
-    def from_config(cls, config: Qwen3Config) -> "Qwen3ForCausalLM":
+    def from_config(
+        cls,
+        config: Qwen3Config,
+        attention_backend: AttentionBackendName = "sdpa",
+    ) -> "Qwen3ForCausalLM":
         return cls(
             vocab_size=config.vocab_size,
             hidden_size=config.hidden_size,
@@ -129,6 +136,7 @@ class Qwen3ForCausalLM(nn.Module):
             rope_theta=config.rope_theta,
             use_qk_norm=True,
             rms_norm_eps=config.rms_norm_eps,
+            attention_backend=attention_backend,
         )
 
     def forward(
@@ -154,9 +162,13 @@ def load_qwen3(
     model_id: str = MODEL_ID,
     device: str = "cpu",
     dtype: torch.dtype = torch.float32,
+    attention_backend: AttentionBackendName = "sdpa",
 ) -> Qwen3ForCausalLM:
     config = load_config(model_id)
-    model = Qwen3ForCausalLM.from_config(config)
+    model = Qwen3ForCausalLM.from_config(
+        config,
+        attention_backend=attention_backend,
+    )
     model.to(device=device, dtype=dtype)
 
     weights = load_weights(

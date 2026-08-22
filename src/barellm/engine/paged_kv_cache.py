@@ -14,6 +14,30 @@ class _RequestPages:
     layer_seq_lens: list[int]
 
 
+@dataclass(frozen=True)
+class PagedKVMetadata:
+    """Read-only post-append view for a future direct paged backend."""
+
+    key_cache: torch.Tensor
+    value_cache: torch.Tensor
+    layer_idx: int
+    block_table: torch.Tensor
+    seq_len: int
+    block_size: int
+
+
+@dataclass(frozen=True)
+class PagedBatchKVMetadata:
+    """Rectangular, device-resident metadata for a batched paged decode."""
+
+    key_cache: torch.Tensor
+    value_cache: torch.Tensor
+    layer_idx: int
+    block_tables: torch.Tensor
+    seq_lens: torch.Tensor
+    block_size: int
+
+
 class PagedKVCache:
     """Paged K/V storage with dense gathering for the current SDPA backend."""
 
@@ -121,6 +145,14 @@ class PagedLayerKV:
         key: torch.Tensor,
         value: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        self.append_only(key, value)
+        return self.read()
+
+    def append_only(
+        self,
+        key: torch.Tensor,
+        value: torch.Tensor,
+    ) -> None:
         check(key.ndim == 4 and value.ndim == 4, "K/V must have shape [B, H, T, D]")
         check(key.shape == value.shape, "K/V must have identical shape")
         check(key.shape[0] == 1, "PagedKVCache currently supports batch size 1")
@@ -159,7 +191,26 @@ class PagedLayerKV:
         ] = value_values
 
         self._request.layer_seq_lens[self.layer_idx] = end
-        return self.read()
+
+    def paged_metadata_post_append(self) -> PagedKVMetadata:
+        check(self.seq_len > 0, "KV cache is empty")
+        block_ids_fit_int32 = self._request.block_table.numel() == 0 or (
+            int(self._request.block_table.min().item()) >= 0
+            and int(self._request.block_table.max().item())
+            <= torch.iinfo(torch.int32).max
+        )
+        check(
+            block_ids_fit_int32,
+            "physical block id does not fit in int32 metadata",
+        )
+        return PagedKVMetadata(
+            key_cache=self.storage.key_cache,
+            value_cache=self.storage.value_cache,
+            layer_idx=self.layer_idx,
+            block_table=self._request.block_table.to(dtype=torch.int32),
+            seq_len=self.seq_len,
+            block_size=self.storage.block_size,
+        )
 
     def read(self) -> tuple[torch.Tensor, torch.Tensor]:
         check(self.seq_len > 0, "KV cache is empty")

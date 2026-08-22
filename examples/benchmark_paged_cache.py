@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import cast
 
 import torch
+import torch.nn.functional as F
 
 from barellm.benchmark import summarize
 from barellm.config import DEVICE, DTYPE
@@ -224,6 +225,37 @@ def read_batch(requests: list[PreparedRequest]) -> None:
         batch_cache.layer(layer_index).read()
 
 
+def make_gather_repeat_sdpa(requests: list[PreparedRequest]):
+    """Return a decode-shaped benchmark for gather, GQA repeat, and SDPA."""
+    batch_cache = BatchKVCache([prepared.cache for prepared in requests])
+    key = requests[0].keys[0]
+    query = torch.zeros(
+        len(requests),
+        key.shape[1] * 2,
+        1,
+        key.shape[3],
+        dtype=key.dtype,
+        device=key.device,
+    )
+
+    def operation() -> None:
+        for layer_index in range(len(requests[0].keys)):
+            layer = batch_cache.layer(layer_index)
+            key, value = layer.read()
+            key = key.repeat_interleave(2, dim=1)
+            value = value.repeat_interleave(2, dim=1)
+            mask = layer.attention_mask(q_len=1)
+            F.scaled_dot_product_attention(
+                query,
+                key,
+                value,
+                attn_mask=mask,
+                is_causal=mask is None,
+            )
+
+    return operation
+
+
 def append_all(requests: list[PreparedRequest]) -> None:
     for request_index, prepared in enumerate(requests):
         for layer_index in range(len(prepared.keys)):
@@ -279,6 +311,12 @@ def run_case(
                 device=device,
             )
         }
+        operations["gather_repeat_sdpa_all_layers"] = measure(
+            make_gather_repeat_sdpa(requests),
+            runs=runs,
+            warmup=warmup,
+            device=device,
+        )
     finally:
         release_requests(manager, requests)
 

@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from barellm.attention import AttentionBackendName, create_attention_backend
 from barellm.models.cache import KVCache
 from barellm.models.norm import RMSNorm
 from barellm.models.rope import RotaryEmbedding, apply_rope
@@ -17,6 +18,7 @@ class CausalSelfAttention(nn.Module):
         rope_theta: float = 1_000_000.0,
         use_qk_norm: bool = False,
         rms_norm_eps: float = 1e-6,
+        attention_backend: AttentionBackendName = "sdpa",
     ):
         super().__init__()
         check(hidden_size > 0, "hidden_size must be positive")
@@ -37,6 +39,13 @@ class CausalSelfAttention(nn.Module):
         if self.use_qk_norm:
             self.q_norm = RMSNorm(head_dim, rms_norm_eps)
             self.k_norm = RMSNorm(head_dim, rms_norm_eps)
+        self.attention_backend = attention_backend
+        self._backend = create_attention_backend(
+            attention_backend,
+            sdpa=lambda *args, **kwargs: F.scaled_dot_product_attention(
+                *args, **kwargs
+            ),
+        )
 
     def forward(
         self,
@@ -67,19 +76,13 @@ class CausalSelfAttention(nn.Module):
         q = apply_rope(q, cos, sin)
         k = apply_rope(k, cos, sin)
 
-        layer_cache = None
-        if kv_cache is not None:
-            layer_cache = kv_cache.layer(layer_idx)
-            k, v = layer_cache.append(k, v)
-
-        q_len = q.shape[2]
-        attn_mask = None if layer_cache is None else layer_cache.attention_mask(q_len)
-        context = F.scaled_dot_product_attention(
+        layer_cache = None if kv_cache is None else kv_cache.layer(layer_idx)
+        context = self._backend.attend(
             q,
             k,
             v,
-            attn_mask=attn_mask,
-            is_causal=attn_mask is None and q_len > 1,
+            layer_cache,
+            group_size=1,
         )
 
         # [B, H, T, D_h] -> [B, T, D]
@@ -98,6 +101,7 @@ class GroupedQueryAttention(nn.Module):
         rope_theta: float = 1_000_000.0,
         use_qk_norm: bool = False,
         rms_norm_eps: float = 1e-6,
+        attention_backend: AttentionBackendName = "sdpa",
     ):
         super().__init__()
         check(hidden_size > 0, "hidden_size must be positive")
@@ -125,6 +129,13 @@ class GroupedQueryAttention(nn.Module):
         if self.use_qk_norm:
             self.q_norm = RMSNorm(head_dim, rms_norm_eps)
             self.k_norm = RMSNorm(head_dim, rms_norm_eps)
+        self.attention_backend = attention_backend
+        self._backend = create_attention_backend(
+            attention_backend,
+            sdpa=lambda *args, **kwargs: F.scaled_dot_product_attention(
+                *args, **kwargs
+            ),
+        )
 
     def forward(
         self,
@@ -157,23 +168,13 @@ class GroupedQueryAttention(nn.Module):
         q = apply_rope(q, cos, sin)
         k = apply_rope(k, cos, sin)
 
-        layer_cache = None
-        if kv_cache is not None:
-            layer_cache = kv_cache.layer(layer_idx)
-            k, v = layer_cache.append(k, v)
-
-        # [B, H_kv, T, D_h] -> [B, H, T, D_h]
-        k = k.repeat_interleave(self.group_size, dim=1)
-        v = v.repeat_interleave(self.group_size, dim=1)
-
-        q_len = q.shape[2]
-        attn_mask = None if layer_cache is None else layer_cache.attention_mask(q_len)
-        context = F.scaled_dot_product_attention(
+        layer_cache = None if kv_cache is None else kv_cache.layer(layer_idx)
+        context = self._backend.attend(
             q,
             k,
             v,
-            attn_mask=attn_mask,
-            is_causal=attn_mask is None and q_len > 1,
+            layer_cache,
+            group_size=self.group_size,
         )
 
         # [B, H, T, D_h] -> [B, T, D]
