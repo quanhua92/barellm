@@ -241,6 +241,74 @@ class TestEngine:
         assert second.id not in paged_kv_cache.request_pages
         assert len(block_pool.free_ids) == len(block_pool.blocks)
 
+    def test_does_not_admit_more_requests_than_max_batch(self):
+        model = FixedTokenModel([7])
+        scheduler = Scheduler(max_batch=2)
+        requests = [
+            Request(
+                id=f"batch-limit-{index}",
+                token_ids=torch.tensor([[index + 1]]),
+                max_new_tokens=2,
+                temperature=0.0,
+            )
+            for index in range(3)
+        ]
+        for request in requests:
+            scheduler.add_request(request)
+
+        block_pool = BlockPool(4)
+        paged_kv_cache = PagedKVCache(
+            num_layers=1,
+            max_blocks=4,
+            num_kv_heads=1,
+            block_size=2,
+            head_dim=1,
+        )
+        manager = KVCacheManager(2, block_pool, paged_kv_cache)
+        events = []
+        engine = Engine(model, scheduler, manager)
+
+        engine.run(on_event=events.append)
+
+        decode_batches = [
+            event for event in events if isinstance(event, DecodeBatchStart)
+        ]
+        assert [len(event.request_ids) for event in decode_batches] == [2, 1]
+        assert all(request.finish_reason == FINISH_LENGTH for request in requests)
+        assert len(block_pool.free_ids) == len(block_pool.blocks)
+
+    def test_repeated_request_lifecycle_reuses_small_block_pool(self):
+        model = FixedTokenModel([7])
+        scheduler = Scheduler(max_batch=1)
+        block_pool = BlockPool(2)
+        paged_kv_cache = PagedKVCache(
+            num_layers=1,
+            max_blocks=2,
+            num_kv_heads=1,
+            block_size=2,
+            head_dim=1,
+        )
+        manager = KVCacheManager(2, block_pool, paged_kv_cache)
+        engine = Engine(model, scheduler, manager)
+
+        for index in range(8):
+            request = Request(
+                id=f"stress-{index}",
+                token_ids=torch.tensor([[index + 1]]),
+                max_new_tokens=3,
+                temperature=0.0,
+            )
+            scheduler.add_request(request)
+            engine.run()
+
+            assert request.finish_reason == FINISH_LENGTH
+            assert request.generated_count == 3
+            assert not scheduler.waiting
+            assert not scheduler.running
+            assert not manager.request_id_to_blocks
+            assert not paged_kv_cache.request_pages
+            assert len(block_pool.free_ids) == len(block_pool.blocks)
+
     def test_decode_skips_request_when_no_block_is_available(self):
         model = TinyEngineModel()
         scheduler = Scheduler(max_batch=1)

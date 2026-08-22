@@ -57,3 +57,29 @@ def test_manager_reuses_freed_blocks_for_new_request() -> None:
     assert manager.allocate_request(request_b)
     assert len(manager.request_id_to_blocks[request_b.id]) == 1
     assert len(pool.free_ids) == 1
+
+
+def test_reused_block_does_not_expose_previous_logical_cache() -> None:
+    manager, _pool = make_manager(max_blocks=1)
+    request_a = make_request("A", seq_len=1)
+    request_b = make_request("B", seq_len=1)
+
+    assert manager.allocate_request(request_a)
+    block_a = manager.request_id_to_blocks[request_a.id][0].block_id
+    old_key = torch.full((1, 1, 1, 2), 11.0)
+    old_value = torch.full((1, 1, 1, 2), 22.0)
+    manager.get_cache(request_a).layer(0).append(old_key, old_value)
+    manager.free_request(request_a.id)
+
+    assert manager.allocate_request(request_b)
+    block_b = manager.request_id_to_blocks[request_b.id][0].block_id
+    assert block_b == block_a
+
+    new_layer = manager.get_cache(request_b).layer(0)
+    with pytest.raises(ValueError, match="empty"):
+        new_layer.read()
+
+    new_key = torch.full((1, 1, 1, 2), 33.0)
+    new_value = torch.full((1, 1, 1, 2), 44.0)
+    new_layer.append(new_key, new_value)
+    torch.testing.assert_close(new_layer.read(), (new_key, new_value))
