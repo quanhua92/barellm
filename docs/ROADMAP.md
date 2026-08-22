@@ -114,7 +114,7 @@ reference path. The default remains paged cached generation.
 
 - [x] Export engine event traces and generation metrics
 - [x] Benchmark uncached versus cached decode
-- [ ] Benchmark dense gather from paged cache
+- [x] Benchmark dense gather from paged cache
 - [ ] Implement direct paged attention
 - [ ] Integrate FlashAttention where compatible
 - [ ] Add sliding-window attention

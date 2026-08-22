@@ -78,6 +78,17 @@ outputs match, and reports median prefill and decode timings. This is a
 repeatable performance comparison; use `--profile` when you need an event
 trace for one individual run.
 
+Measure the paged cache's dense gather and padding overhead without loading a
+model:
+
+```bash
+uv run python examples/benchmark_paged_cache.py --no-boundaries --runs 3
+uv run python examples/benchmark_paged_cache.py --output benchmarks/cache.json
+```
+
+This benchmark isolates cache reads from transformer computation and reports
+the current `append()` behavior as append plus dense read.
+
 `generate_demo.py` uses the public `barellm.engine.generate()` API. The lower-
 level wiring example is available as:
 
