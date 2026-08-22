@@ -45,10 +45,36 @@ def check_matching_tokens(
 ) -> torch.Tensor:
     """Validate that a benchmark run matches the first run's token IDs."""
     if reference is not None and not torch.equal(reference, current):
-        raise RuntimeError(
-            "cached and uncached generation produced different token IDs"
-        )
+        raise RuntimeError("benchmark runs produced different token IDs")
     return current if reference is None else reference
+
+
+def compare_token_ids(
+    expected: torch.Tensor,
+    actual: torch.Tensor,
+) -> dict[str, object]:
+    """Describe whether two generated token sequences are identical."""
+    if expected.shape != actual.shape:
+        return {
+            "matched": False,
+            "reason": "token ID shapes differ",
+            "expected_shape": list(expected.shape),
+            "actual_shape": list(actual.shape),
+        }
+
+    mismatches = torch.nonzero(expected != actual, as_tuple=False)
+    if mismatches.numel() == 0:
+        return {"matched": True}
+
+    first = mismatches[0]
+    position = int(first[-1].item())
+    return {
+        "matched": False,
+        "reason": "token IDs differ",
+        "first_mismatch": position,
+        "expected_token": int(expected.flatten()[position].item()),
+        "actual_token": int(actual.flatten()[position].item()),
+    }
 
 
 def summarize_samples(samples: Sequence[BenchmarkSample]) -> dict[str, object]:

@@ -6,6 +6,7 @@ import torch
 from barellm.benchmark import (
     BenchmarkSample,
     check_matching_tokens,
+    compare_token_ids,
     summarize,
     summarize_samples,
 )
@@ -82,3 +83,29 @@ def test_check_matching_tokens_rejects_cached_output_mismatch() -> None:
 
     with pytest.raises(RuntimeError, match="different token IDs"):
         check_matching_tokens(reference, torch.tensor([[1, 3]]))
+
+
+def test_compare_token_ids_reports_first_mismatch() -> None:
+    result = compare_token_ids(
+        torch.tensor([[10, 11, 12]]),
+        torch.tensor([[10, 99, 12]]),
+    )
+
+    assert result == {
+        "matched": False,
+        "reason": "token IDs differ",
+        "first_mismatch": 1,
+        "expected_token": 11,
+        "actual_token": 99,
+    }
+
+
+def test_compare_token_ids_reports_shape_mismatch() -> None:
+    result = compare_token_ids(torch.tensor([[10, 11]]), torch.tensor([[10]]))
+
+    assert result == {
+        "matched": False,
+        "reason": "token ID shapes differ",
+        "expected_shape": [1, 2],
+        "actual_shape": [1, 1],
+    }

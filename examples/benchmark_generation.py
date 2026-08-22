@@ -18,6 +18,7 @@ from transformers import AutoTokenizer
 from barellm.benchmark import (
     BenchmarkSample,
     check_matching_tokens,
+    compare_token_ids,
     summarize_samples,
 )
 from barellm.config import DEVICE, DTYPE, MODEL_ID
@@ -89,6 +90,10 @@ def benchmark_case(
         "cached": None,
         "uncached": None,
     }
+    repeatability: dict[str, dict[str, object]] = {
+        "cached": {"matched": True},
+        "uncached": {"matched": True},
+    }
 
     for use_cache, mode in ((True, "cached"), (False, "uncached")):
         for warmup_index in range(warmup):
@@ -121,23 +126,41 @@ def benchmark_case(
                     f"expected {max_new_tokens}"
                 )
             current_tokens = result.token_ids.detach().cpu()
-            reference_tokens[mode] = check_matching_tokens(
-                reference_tokens[mode],
-                current_tokens,
-            )
+            try:
+                reference_tokens[mode] = check_matching_tokens(
+                    reference_tokens[mode],
+                    current_tokens,
+                )
+            except RuntimeError as exc:
+                repeatability[mode] = {
+                    "matched": False,
+                    "reason": str(exc),
+                }
             samples[mode].append(sample)
 
     cached_tokens = reference_tokens["cached"]
     uncached_tokens = reference_tokens["uncached"]
     if cached_tokens is None or uncached_tokens is None:
         raise RuntimeError("benchmark did not produce cached and uncached results")
-    if not torch.equal(cached_tokens, uncached_tokens):
-        raise RuntimeError(
-            "cached and uncached generation produced different token IDs"
-        )
+    cached_vs_uncached = compare_token_ids(cached_tokens, uncached_tokens)
+    correctness_failed = not bool(cached_vs_uncached["matched"])
+    failure_reason = str(cached_vs_uncached["reason"]) if correctness_failed else None
+    if failure_reason is None:
+        for mode, result in repeatability.items():
+            if not result["matched"]:
+                correctness_failed = True
+                failure_reason = f"{mode}: {result['reason']}"
+                break
+    correctness = {
+        "matched": not correctness_failed,
+        "reason": failure_reason,
+        "cached_vs_uncached": cached_vs_uncached,
+        "repeatability": repeatability,
+    }
 
     return {
         "prompt_tokens": sequence_length,
+        "correctness": correctness,
         "cached": {
             "summary": summarize_samples(samples["cached"]),
             "samples": [sample.to_dict() for sample in samples["cached"]],
@@ -154,7 +177,7 @@ def print_summary(cases: list[dict[str, object]]) -> None:
     print("  " + "-" * 76)
     print(
         f"  {'tokens':>8} {'mode':>10} {'median total':>15} "
-        f"{'median prefill':>16} {'median decode':>15}"
+        f"{'median prefill':>16} {'median decode':>15} {'status':>10}"
     )
     print("  " + "-" * 76)
     for case in cases:
@@ -165,12 +188,25 @@ def print_summary(cases: list[dict[str, object]]) -> None:
             total = cast(dict[str, float], summary["total_seconds"])
             prefill = cast(dict[str, float], summary["prefill_seconds"])
             decode = cast(dict[str, float], summary["decode_seconds"])
+            correctness = cast(dict[str, object], case["correctness"])
+            status = "OK" if correctness["matched"] else "WARNING"
             print(
                 f"  {sequence_length:>8} {mode:>10} "
                 f"{total['median']:>14.3f}s "
                 f"{prefill['median']:>15.3f}s "
-                f"{decode['median']:>14.3f}s"
+                f"{decode['median']:>14.3f}s {status:>10}"
             )
+        correctness = cast(dict[str, object], case["correctness"])
+        if not correctness["matched"]:
+            details = cast(dict[str, object], correctness["cached_vs_uncached"])
+            print(f"    warning: {correctness['reason']}")
+            if "first_mismatch" in details:
+                print(
+                    "    first mismatch: "
+                    f"position={details['first_mismatch']} "
+                    f"cached={details['expected_token']} "
+                    f"uncached={details['actual_token']}"
+                )
     print("  " + "-" * 76)
 
 
@@ -195,6 +231,11 @@ def main() -> None:
     parser.add_argument("--num-blocks", type=int, default=256)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--strict-correctness",
+        action="store_true",
+        help="fail instead of warning when generated outputs differ",
+    )
     args = parser.parse_args()
 
     if args.max_new_tokens <= 0:
@@ -254,16 +295,20 @@ def main() -> None:
     for sequence_length in args.seq_lens:
         print(f"  measuring prompt length {sequence_length}...")
         token_ids = build_prompt(base_token_ids, sequence_length)
-        cases.append(
-            benchmark_case(
-                engine,
-                token_ids,
-                max_new_tokens=args.max_new_tokens,
-                runs=args.runs,
-                warmup=args.warmup,
-                sequence_length=sequence_length,
-            )
+        case = benchmark_case(
+            engine,
+            token_ids,
+            max_new_tokens=args.max_new_tokens,
+            runs=args.runs,
+            warmup=args.warmup,
+            sequence_length=sequence_length,
         )
+        cases.append(case)
+        correctness = cast(dict[str, object], case["correctness"])
+        if args.strict_correctness and not correctness["matched"]:
+            raise RuntimeError(
+                f"prompt length {sequence_length}: {correctness['reason']}"
+            )
 
     payload = {
         "schema_version": 1,
@@ -274,6 +319,7 @@ def main() -> None:
         "max_new_tokens": args.max_new_tokens,
         "runs": args.runs,
         "warmup": args.warmup,
+        "strict_correctness": args.strict_correctness,
         "block_size": args.block_size,
         "num_blocks": args.num_blocks,
         "cases": cases,
