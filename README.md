@@ -66,6 +66,18 @@ uv run python examples/batch_demo.py
 uv run python examples/profile_demo.py "Explain paged KV caching."
 ```
 
+Compare cached and uncached generation across prompt lengths:
+
+```bash
+uv run python examples/benchmark_generation.py --seq-lens 128,512 --runs 3
+uv run python examples/benchmark_generation.py --output benchmarks/results.json
+```
+
+The benchmark warms up each mode, verifies that cached and uncached greedy
+outputs match, and reports median prefill and decode timings. This is a
+repeatable performance comparison; use `--profile` when you need an event
+trace for one individual run.
+
 `generate_demo.py` uses the public `barellm.engine.generate()` API. The lower-
 level wiring example is available as:
 
