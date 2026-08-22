@@ -10,6 +10,7 @@ from barellm.utils import check
 @dataclass
 class _RequestPages:
     blocks: list[KVCacheBlock]
+    block_table: torch.Tensor
     layer_seq_lens: list[int]
 
 
@@ -58,10 +59,20 @@ class PagedKVCache:
         if request_id not in self.request_pages:
             self.request_pages[request_id] = _RequestPages(
                 blocks=list(blocks),
+                block_table=torch.tensor(
+                    [block.block_id for block in blocks],
+                    dtype=torch.long,
+                    device=self.device,
+                ),
                 layer_seq_lens=[0] * self.num_layers,
             )
         else:
             self.request_pages[request_id].blocks = list(blocks)
+            self.request_pages[request_id].block_table = torch.tensor(
+                [block.block_id for block in blocks],
+                dtype=torch.long,
+                device=self.device,
+            )
 
     def unregister_request(self, request_id: str) -> None:
         self.request_pages.pop(request_id, None)
@@ -148,23 +159,28 @@ class PagedLayerKV:
     def read(self) -> tuple[torch.Tensor, torch.Tensor]:
         check(self.seq_len > 0, "KV cache is empty")
 
-        keys = []
-        values = []
-        for logical_pos in range(self.seq_len):
-            block_index = logical_pos // self.storage.block_size
-            block_offset = logical_pos % self.storage.block_size
-            block_id = self._request.blocks[block_index].block_id
+        positions = torch.arange(
+            self.seq_len, device=self.storage.device, dtype=torch.long
+        )
+        logical_blocks = positions // self.storage.block_size  # [T]
+        block_offsets = positions % self.storage.block_size  # [T]
+        physical_blocks = self._request.block_table[logical_blocks]  # [T]
 
-            keys.append(
-                self.storage.key_cache[self.layer_idx, block_id, :, block_offset, :]
-            )
-            values.append(
-                self.storage.value_cache[self.layer_idx, block_id, :, block_offset, :]
-            )
+        # self.storage.key_cache: [L, P, H, S, D] = [layer, physical_block, kv_head, offset_inside_block, head_dim]
+        # keys: [T, H, D]
+        # values: [T, H, D]
+        # Pytorch advanced indexing: tensor[integer, index_tensor, :, index_tensor, :]
+        keys = self.storage.key_cache[
+            self.layer_idx, physical_blocks, :, block_offsets, :
+        ]
+        values = self.storage.value_cache[
+            self.layer_idx, physical_blocks, :, block_offsets, :
+        ]
 
+        # [T, H, D] -> [B, H, T, D]
         return (
-            torch.stack(keys, dim=1).unsqueeze(0),
-            torch.stack(values, dim=1).unsqueeze(0),
+            keys.permute(1, 0, 2).unsqueeze(0),
+            values.permute(1, 0, 2).unsqueeze(0),
         )
 
     def attention_mask(self, q_len: int) -> torch.Tensor | None:

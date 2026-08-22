@@ -58,6 +58,30 @@ def test_paged_append_writes_new_token_after_boundary() -> None:
     )
 
 
+def test_paged_block_table_refreshes_when_request_grows() -> None:
+    storage, pool = make_storage(block_size=2, max_blocks=2)
+    initial_blocks = pool.allocate(1)
+    storage.register_request("A", initial_blocks)
+    layer = storage.get_cache("A").layer(0)
+
+    key = torch.arange(18, dtype=torch.float32).reshape(1, 2, 3, 3)
+    value = key + 100
+    layer.append(key[:, :, :2], value[:, :, :2])
+
+    expanded_blocks = initial_blocks + pool.allocate(1)
+    storage.register_request("A", expanded_blocks)
+    layer.append(key[:, :, 2:], value[:, :, 2:])
+
+    assert storage.request_pages["A"].block_table.tolist() == [
+        block.block_id for block in expanded_blocks
+    ]
+    actual_key, actual_value = layer.read()
+    assert actual_key.shape == (1, 2, 3, 3)
+    assert actual_value.shape == (1, 2, 3, 3)
+    torch.testing.assert_close(actual_key, key)
+    torch.testing.assert_close(actual_value, value)
+
+
 def test_paged_decode_appends_across_multiple_boundaries() -> None:
     storage, pool = make_storage(block_size=2, max_blocks=3)
     storage.register_request("A", pool.allocate(3))
