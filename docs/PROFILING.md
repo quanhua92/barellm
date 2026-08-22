@@ -36,6 +36,21 @@ uv run python examples/generate_demo.py --profile --torch-profile "Say hello"
 uv run python examples/generate_demo.py --profile-dir profiles/debug "Say hello"
 ```
 
+The cached-versus-uncached benchmark also supports profiling one selected
+case after its measurements complete:
+
+```bash
+uv run python examples/benchmark_generation.py \
+  --seq-lens 128,512,1024 \
+  --profile --profile-seq-len 512 --profile-mode cached
+```
+
+Use `--torch-profile` for the larger operator trace. The profiled run is
+separate from the benchmark samples and is not included in the reported
+medians. If `--profile-seq-len` is omitted, the first sequence length is used.
+The profile directory contains the same `engine.trace.json`, optional
+`torch.trace.json`, and `metrics.json` files as the demos.
+
 Open either trace JSON file with [Perfetto](https://ui.perfetto.dev/) or a
 Chrome-compatible trace viewer. The engine trace explains *what the inference
 engine was doing*; the PyTorch trace explains *which operators consumed time*.

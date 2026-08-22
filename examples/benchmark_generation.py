@@ -4,11 +4,13 @@ Usage:
     uv run python examples/benchmark_generation.py
     uv run python examples/benchmark_generation.py --seq-lens 128,512 --runs 3
     uv run python examples/benchmark_generation.py --output benchmarks/results.json
+    uv run python examples/benchmark_generation.py --profile --profile-seq-len 512
 """
 
 import argparse
 import json
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import cast
 
@@ -23,7 +25,8 @@ from barellm.benchmark import (
     summarize_samples,
 )
 from barellm.config import DEVICE, DTYPE, MODEL_ID
-from barellm.engine.events import TimingConfig
+from barellm.engine import TorchProfiler, TraceRecorder, profile_run_dir
+from barellm.engine.events import EventCallback, TimingConfig
 from barellm.engine.generate import GenerationResult, generate
 from barellm.runtime import load_qwen3_engine
 
@@ -55,6 +58,7 @@ def run_once(
     max_new_tokens: int,
     mode: str,
     run_index: int,
+    on_event: EventCallback | None = None,
 ) -> tuple[GenerationResult, BenchmarkSample]:
     started_at = time.perf_counter()
     result = generate(
@@ -66,6 +70,7 @@ def run_once(
         eos_ids=set(),
         use_cache=use_cache,
         request_id=f"benchmark-{mode}-{run_index}",
+        on_event=on_event,
         timing=TimingConfig(synchronize_device=True),
     )
     wall_seconds = time.perf_counter() - started_at
@@ -184,6 +189,57 @@ def benchmark_case(
     }
 
 
+def profile_case(
+    engine,
+    token_ids: torch.Tensor,
+    *,
+    max_new_tokens: int,
+    sequence_length: int,
+    mode: str,
+    profile_dir: Path,
+    torch_profile: bool,
+) -> GenerationResult:
+    """Profile one case without including it in benchmark statistics."""
+    recorder = TraceRecorder()
+    metadata = {
+        "model": MODEL_ID,
+        "device": DEVICE,
+        "dtype": str(DTYPE),
+        "use_cache": mode == "cached",
+        "profile_sequence_length": sequence_length,
+        "profile_mode": mode,
+        "max_new_tokens": max_new_tokens,
+    }
+    torch_trace_path = profile_dir / "torch.trace.json"
+    profiler = TorchProfiler(torch_trace_path) if torch_profile else nullcontext()
+    with profiler:
+        result, _ = run_once(
+            engine,
+            token_ids,
+            use_cache=mode == "cached",
+            max_new_tokens=max_new_tokens,
+            mode=f"profile-{mode}",
+            run_index=0,
+            on_event=recorder,
+        )
+
+    recorder.export_chrome_trace(
+        profile_dir / "engine.trace.json",
+        metadata=metadata,
+    )
+    recorder.export_metrics(
+        profile_dir / "metrics.json",
+        result.metrics,
+        metadata=metadata,
+    )
+    print("\n  profile exports:")
+    print(f"    engine trace: {profile_dir / 'engine.trace.json'}")
+    if torch_profile:
+        print(f"    torch trace:  {torch_trace_path}")
+    print(f"    metrics:      {profile_dir / 'metrics.json'}")
+    return result
+
+
 def print_summary(cases: list[dict[str, object]]) -> None:
     print("\n  performance summary")
     print("  " + "-" * 76)
@@ -250,6 +306,32 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--output", type=Path)
     parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="profile one benchmark case with the lightweight engine trace",
+    )
+    parser.add_argument(
+        "--torch-profile",
+        action="store_true",
+        help="also export the larger PyTorch operator trace for one case",
+    )
+    parser.add_argument(
+        "--profile-seq-len",
+        type=int,
+        help="sequence length to profile; defaults to the first --seq-lens value",
+    )
+    parser.add_argument(
+        "--profile-mode",
+        choices=("cached", "uncached"),
+        default="cached",
+        help="generation mode to profile",
+    )
+    parser.add_argument(
+        "--profile-dir",
+        type=Path,
+        help="profile output directory; defaults to a timestamped directory",
+    )
+    parser.add_argument(
         "--strict-correctness",
         action="store_true",
         help="fail instead of warning when generated outputs differ",
@@ -266,6 +348,18 @@ def main() -> None:
         parser.error("--block-size must be greater than zero")
     if args.num_blocks <= 0:
         parser.error("--num-blocks must be greater than zero")
+    if args.profile_seq_len is not None and args.profile_seq_len <= 0:
+        parser.error("--profile-seq-len must be greater than zero")
+
+    profiling = (
+        args.profile
+        or args.torch_profile
+        or args.profile_seq_len is not None
+        or args.profile_dir is not None
+    )
+    profile_sequence_length = args.profile_seq_len or args.seq_lens[0]
+    if profiling and profile_sequence_length not in args.seq_lens:
+        parser.error("--profile-seq-len must be one of --seq-lens")
 
     required_blocks = (
         max(args.seq_lens) + args.max_new_tokens + args.block_size - 1
@@ -285,6 +379,8 @@ def main() -> None:
     print(f"  seq_lens:     {args.seq_lens}")
     print(f"  max new:      {args.max_new_tokens}")
     print(f"  runs/warmup:  {args.runs}/{args.warmup}")
+    if profiling:
+        print(f"  profile:      {profile_sequence_length} tokens ({args.profile_mode})")
 
     print("\n[1/3] Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
@@ -343,7 +439,40 @@ def main() -> None:
         "cases": cases,
     }
     print_summary(cases)
+
+    profile_metadata: dict[str, object] | None = None
+    if profiling:
+        profile_dir = args.profile_dir or profile_run_dir(
+            model_name=MODEL_ID,
+            device=DEVICE,
+        )
+        profile_token_ids = build_prompt(
+            base_token_ids,
+            profile_sequence_length,
+        )
+        profile_result = profile_case(
+            engine,
+            profile_token_ids,
+            max_new_tokens=args.max_new_tokens,
+            sequence_length=profile_sequence_length,
+            mode=args.profile_mode,
+            profile_dir=profile_dir,
+            torch_profile=args.torch_profile,
+        )
+        if profile_result.generated_count != args.max_new_tokens:
+            raise RuntimeError(
+                f"profile generated {profile_result.generated_count} tokens; "
+                f"expected {args.max_new_tokens}"
+            )
+        profile_metadata = {
+            "directory": str(profile_dir),
+            "sequence_length": profile_sequence_length,
+            "mode": args.profile_mode,
+            "torch_profile": args.torch_profile,
+        }
+
     if args.output is not None:
+        payload["profile"] = profile_metadata
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         print(f"\n  results: {args.output}")
