@@ -153,6 +153,13 @@ def main() -> None:
     scheduler.add_request(request)
     engine = Engine(model, scheduler, cache_manager)
     event_sink = recorder if recorder is not None else events.append
+    metadata = {
+        "model": MODEL_ID,
+        "device": DEVICE,
+        "dtype": str(DTYPE),
+        "use_cache": not args.no_cache,
+        "prompt": args.prompt,
+    }
     if torch_profiling:
         assert profile_dir is not None
         with TorchProfiler(profile_dir / "torch.trace.json"):
@@ -164,13 +171,6 @@ def main() -> None:
         assert recorder is not None
         assert profile_dir is not None
         events = recorder.events
-        metadata = {
-            "model": MODEL_ID,
-            "device": DEVICE,
-            "dtype": str(DTYPE),
-            "use_cache": not args.no_cache,
-            "prompt": args.prompt,
-        }
         recorder.export_chrome_trace(
             profile_dir / "engine.trace.json",
             metadata=metadata,
@@ -182,6 +182,7 @@ def main() -> None:
     metrics = metrics_collector.build(request.generated_count)
     generated = request.generated_count
     if recorder is not None:
+        assert profile_dir is not None
         recorder.export_metrics(
             profile_dir / "metrics.json",
             metrics,
@@ -195,8 +196,11 @@ def main() -> None:
     print(f"  total time:   {metrics.total_seconds:.3f}s")
     print(f"  TTFT:         {metrics.time_to_first_token or 0.0:.3f}s")
     print(f"  avg ITL:      {metrics.average_inter_token_latency or 0.0:.3f}s")
-    print(f"  prefill tok/s: {metrics.prefill_tokens_per_second:.1f}")
-    print(f"  decode tok/s:  {metrics.decode_tokens_per_second:.1f}")
+    prefill_tokens_per_second = metrics.prefill_tokens_per_second
+    if prefill_tokens_per_second is None:
+        prefill_tokens_per_second = 0.0
+    print(f"  prefill tok/s: {prefill_tokens_per_second:.1f}")
+    print(f"  decode tok/s:  {metrics.decode_tokens_per_second or 0.0:.1f}")
     print("-" * 60)
 
 
