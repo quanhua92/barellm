@@ -1,9 +1,9 @@
 # PyTorch Scaled Dot Product Attention
 
-BareLLM uses `torch.nn.functional.scaled_dot_product_attention` (SDPA) for
-the attention computation. The model prepares Q, K, and V tensors, applies
-RoPE and KV-cache updates, and then delegates the attention weighting and
-value aggregation to PyTorch.
+BareLLM uses `torch.nn.functional.scaled_dot_product_attention` (SDPA) as its
+portable attention backend. The model prepares Q, K, and V tensors and applies
+RoPE; an attention backend then owns the cache update, KV-head expansion, mask
+selection, and attention weighting/value aggregation.
 
 The reference API is documented by PyTorch:
 
@@ -39,7 +39,7 @@ This means the KV cache stores `num_kv_heads`, not `num_heads`.
 ## Causal attention
 
 For a single-request multi-token prefill, the per-request cache returns no
-explicit mask, so the model enables SDPA's causal mode:
+explicit mask, so the SDPA backend enables causal mode:
 
 ```python
 F.scaled_dot_product_attention(
@@ -58,6 +58,23 @@ query position i may attend to key positions 0 .. i
 ```
 
 This prevents a token from reading future tokens in the same sequence.
+
+For one-token cached decode, causal mode is deliberately disabled:
+
+```python
+F.scaled_dot_product_attention(
+    q,
+    k,
+    v,
+    attn_mask=None,
+    is_causal=False,
+)
+```
+
+The key sequence contains past tokens plus the current token, and the newest
+query is allowed to attend to all of them. PyTorch's non-square causal mask is
+upper-left aligned, so `is_causal=True` would incorrectly hide the current
+token in this case.
 
 ## Attention masks
 
@@ -120,16 +137,33 @@ length and supplies the explicit valid-key mask.
 The current engine intentionally supports one-token batched decode. It does
 not yet claim support for multi-token cached batched prefill.
 
-## KV-cache path
+## Backend selection
 
-The attention module does not know whether storage is contiguous or paged. It
-only receives the model-facing cache interface described in
-[CACHE.md](CACHE.md):
+Attention modules accept an `attention_backend` setting when the model is
+constructed:
 
 ```text
-attention
-  -> LayerKV.append(new_k, new_v)
+sdpa    always use dense K/V plus PyTorch SDPA
+auto    currently resolves to sdpa; future capability-gated selection
+triton  reserved for the CUDA direct-paged backend and currently errors
+```
+
+`sdpa` is the default. Backend selection is injected through model/runtime
+construction; there is no mutable global backend. Triton is optional and is
+not imported by the CPU/MPS path.
+
+## KV-cache path
+
+The attention module does not know whether storage is contiguous or paged. The
+selected backend receives the model-facing cache interface described in
+[CACHE.md](CACHE.md) and owns the append-plus-attend operation:
+
+```text
+attention projections + RoPE
+  -> backend.attend(q, new_k, new_v, layer_cache, group_size)
+  -> LayerKV.append(new_k, new_v)       # SDPA backend
   -> complete logical K/V history
+  -> KV-head expansion
   -> SDPA
 ```
 
@@ -148,7 +182,22 @@ logical position
 
 Direct attention over physical pages is a future optimization. The current
 dense-gather path keeps the attention implementation easy to compare against
-the contiguous reference cache.
+the contiguous reference cache and is the correctness oracle for future CUDA
+backends.
+
+The cache also exposes an `append_only()` seam and checked post-append paged
+metadata. The SDPA backend does not need that metadata: it intentionally uses
+the legacy gather-producing `append()`. A future direct backend will use
+`append_only()` and read the physical pages through the metadata, so the token
+is written exactly once and no dense gather is performed unnecessarily.
+
+## CPU and MPS behavior
+
+CPU and Apple MPS use the same PyTorch SDPA reference path. Upstream Triton is
+not required, and no Triton import occurs when using `sdpa` or `auto`. MPS
+benchmarks must synchronize before reading timings; unsupported-operation CPU
+fallback should not be enabled when claiming MPS performance because it can
+hide device transfers.
 
 ## Uncached reference execution
 
@@ -194,7 +243,8 @@ that argument is nonzero.
 
 BareLLM configures CPU, CUDA, and MPS execution paths. Numerical results may
 differ slightly between devices or SDPA kernels. The current equivalence tests
-run with explicit tolerances rather than exact equality.
+run with explicit tolerances rather than exact equality. The SDPA path is the
+reference against which a future Triton implementation must be compared.
 
 ## Verification in this repository
 
@@ -206,6 +256,10 @@ The SDPA contract is exercised by:
 - `tests/test_batched_kv_cache.py` for real paged batched MHA/GQA/MQA decode;
 - `tests/test_contiguous_kv_cache.py` and `tests/test_paged_kv_cache.py` for
   storage behavior independent of model math.
+- `tests/test_attention_backend.py` for backend selection and CPU/MPS device
+  behavior.
+- `examples/benchmark_paged_cache.py` for separate page-gather and
+  gather+SDPA measurements.
 
 The intended reference rule is simple:
 

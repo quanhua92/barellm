@@ -69,6 +69,7 @@ class LayerKV(Protocol):
     def seq_len(self) -> int: ...
 
     def append(self, key, value) -> tuple[Tensor, Tensor]: ...
+    def append_only(self, key, value) -> None: ...
     def read(self) -> tuple[Tensor, Tensor]: ...
     def attention_mask(self, q_len: int) -> Tensor | None: ...
 ```
@@ -78,6 +79,7 @@ The methods mean:
 - `seq_len` is the logical number of cached tokens for that layer;
 - `append` mutates the cache and returns the complete logical K/V tensors that
   attention should use for the current call;
+- `append_only` mutates the cache and advances its length without gathering;
 - `read` returns the current logical K/V history without appending;
 - `attention_mask` returns storage/batch-specific key validity information, or
   `None` when no explicit mask is required.
@@ -87,12 +89,17 @@ returned for this operation instead of appending and then assuming that the
 storage representation can be read directly. A future compressed or quantized
 cache can therefore choose how to produce the tensors needed by attention.
 
+The append-only operation is the future direct-backend seam. A backend that
+reads physical pages directly can write the new K/V once, obtain checked
+post-append metadata, and avoid producing a dense history that it does not
+need.
+
 Protocols use structural typing. Cache classes satisfy the interface without
 inheriting from a shared base class.
 
 ## Attention interaction
 
-Both MHA and GQA use the same cache sequence in
+Both MHA and GQA use the same backend-owned cache sequence in
 [`models/attention.py`](../src/barellm/models/attention.py):
 
 ```text
@@ -100,8 +107,9 @@ project new Q, K, V
   -> apply QK norm when configured
   -> apply RoPE to Q and new K
   -> layer = kv_cache.layer(layer_idx)
-  -> full_k, full_v = layer.append(new_k, new_v)
-  -> mask = layer.attention_mask(q_len)
+  -> backend.attend(q, new_k, new_v, layer, group_size)
+  -> layer.append(new_k, new_v)       # portable SDPA backend
+  -> full logical K/V + mask
   -> SDPA(Q, full_k, full_v, mask)
 ```
 
@@ -203,14 +211,20 @@ order.
 
 ### Append and read
 
-`PagedLayerKV.append`:
+`PagedLayerKV.append_only`:
 
 1. validates shape, batch size, KV-head count, dtype, device, and head size;
 2. computes the logical start and end positions;
 3. checks that the request already owns enough blocks;
 4. writes each new token to its translated physical slot;
 5. advances that layer's logical length;
-6. calls `read` and returns the gathered dense history.
+6. leaves the cache in its post-append state without gathering.
+
+`PagedLayerKV.append` calls `append_only` and then `read`, preserving the
+legacy dense-gather contract used by SDPA. `paged_metadata_post_append` exposes
+a read-only view of the physical storage, layer, block table, block size, and
+post-append length for a future direct paged backend. Batched paged views can
+also build rectangular device-resident `int32` block tables and lengths.
 
 `PagedLayerKV.read` walks logical positions in order, translates each position,
 loads K/V from physical storage, and stacks the values into:
@@ -351,6 +365,10 @@ For each layer it:
 5. stacks them into a dense batch;
 6. creates a boolean valid-key mask.
 
+Its `append_only` operation performs the per-request writes and length updates
+without gather-and-pad work. A future direct backend can use that operation and
+the batched paged metadata instead of constructing dense K/V.
+
 For final lengths `[3, 5]`, the mask is:
 
 ```text
@@ -402,6 +420,7 @@ Cache behavior is covered at several levels:
 - `tests/test_cache_equivalence.py`: contiguous cached MHA/GQA/MQA equivalence;
 - `tests/test_qwen3.py`: multi-step paged MHA/GQA/MQA equivalence;
 - `tests/test_batched_kv_cache.py`: padding masks and real batched paged decode;
+- `tests/test_attention_backend.py`: backend selection and CPU/MPS behavior;
 - `tests/test_engine.py`: request admission, mixed lengths, cleanup, and decode
   behavior under exhausted capacity.
 
