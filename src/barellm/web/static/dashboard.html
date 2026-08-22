@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0d12">
+  <title>BareLLM Profiles</title>
+  <link rel="stylesheet" href="/static/profiles.css">
+</head>
+<body>
+<a class="skip-link" href="#workspace">Skip to dashboard</a>
+<div class="shell">
+  <header class="topbar">
+    <div class="brand"><div class="brand-mark" aria-hidden="true">B</div><div><p class="brand-name">BareLLM</p><p class="brand-subtitle">Inference observability</p></div></div>
+    <div class="status"><span class="status-dot" aria-hidden="true"></span>Local profile server</div>
+  </header>
+  <main class="layout" id="workspace">
+    <aside class="panel sidebar" aria-labelledby="runs-heading">
+      <div class="sidebar-heading"><h2 id="runs-heading">Recent runs</h2><span class="count" id="run-count">Loading…</span></div>
+      <div class="run-list" id="run-list" aria-live="polite"><p class="empty">Loading runs…</p></div>
+    </aside>
+    <section class="workspace" aria-labelledby="run-title">
+      <div class="workspace-header">
+        <div><p class="eyebrow">Selected run</p><h1 id="run-title">Loading profile…</h1><p class="run-meta" id="run-meta"></p></div>
+        <div class="actions" aria-label="Profile actions">
+          <button class="action primary" id="metrics-button" type="button">Refresh metrics</button>
+        </div>
+      </div>
+      <div class="metric-grid" id="metric-grid" aria-live="polite">
+        <div class="metric-card"><span class="metric-label">Time to first token</span><strong class="metric-value">—</strong></div>
+        <div class="metric-card"><span class="metric-label">Prefill throughput</span><strong class="metric-value">—</strong></div>
+        <div class="metric-card"><span class="metric-label">Decode throughput</span><strong class="metric-value">—</strong></div>
+        <div class="metric-card"><span class="metric-label">Average ITL</span><strong class="metric-value">—</strong></div>
+        <div class="metric-card"><span class="metric-label">Total time</span><strong class="metric-value">—</strong></div>
+        <div class="metric-card"><span class="metric-label">Generated tokens</span><strong class="metric-value">—</strong></div>
+        <div class="metric-card"><span class="metric-label">Prompt tokens</span><strong class="metric-value">—</strong></div>
+        <div class="metric-card"><span class="metric-label">Decode time</span><strong class="metric-value">—</strong></div>
+      </div>
+      <p class="message" id="message" role="status" aria-live="polite">Choose a run to inspect metrics.</p>
+      <section class="panel trace-panel" aria-labelledby="trace-heading">
+        <div class="trace-heading">
+          <div><h2 id="trace-heading">Trace viewer</h2><span class="trace-hint">Open a trace in the viewer</span></div>
+          <div class="trace-actions" aria-label="Trace actions">
+            <button class="action" id="engine-button" type="button" disabled>Engine trace</button>
+            <button class="action" id="torch-button" type="button" disabled>PyTorch trace</button>
+          </div>
+        </div>
+        <iframe id="perfetto" title="Perfetto trace viewer" src="https://ui.perfetto.dev/#!/?mode=embedded"></iframe>
+      </section>
+      <details class="details"><summary>Raw metrics JSON</summary><pre class="raw-metrics" id="raw-metrics">No metrics loaded.</pre></details>
+    </section>
+  </main>
+</div>
+<script src="/static/profiles.js" defer></script>
+</body>
+</html>

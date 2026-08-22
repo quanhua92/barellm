@@ -18,7 +18,7 @@ git config core.hooksPath githooks
 - **models/** - "give tokens, return logits" (attention, RoPE, MLP, RMSNorm, transformer)
 - **engine/** - "give a prompt, run inference" (generation loop, KV cache, scheduling, batching)
 - **sampling/** - "give logits, pick a token" (sampler, stop conditions)
-- **config.py** - device/dtype auto-detection
+- **config.py** - environment and dotenv-backed device/dtype/server settings
 - **hub.py** - HuggingFace model download/cache
 - **examples/** - runnable demos (load model, generate text)
 - **tests/** - pytest suite
@@ -45,6 +45,8 @@ The engine event stream and generation timing metrics are documented in
 [`docs/EVENTS.md`](docs/EVENTS.md).
 Optional engine and PyTorch trace export is documented in
 [`docs/PROFILING.md`](docs/PROFILING.md).
+The env-configured HTTP server and local profile dashboard are documented in
+[`docs/SERVER.md`](docs/SERVER.md).
 
 ## Run the demos
 
@@ -97,6 +99,18 @@ uv run barellm generate \
   --prompt "Explain paged attention." \
   --max-new-tokens 128
 ```
+
+Start the HTTP server for health checks and profile inspection:
+
+```bash
+cp .env.example .env
+uv run barellm serve
+```
+
+Open `http://localhost:8000/profiles` for the profile dashboard. Server and
+profile settings are configured with `BARELLM_*` environment variables; see
+[`docs/SERVER.md`](docs/SERVER.md). Set `BARELLM_ENABLE_PROFILE_API=false` to
+disable the profile API and dashboard.
 
 ## Ownership
 

@@ -131,16 +131,23 @@ def main() -> None:
         type=Path,
         help="profile output directory; enables profiling",
     )
+    subparsers.add_parser(
+        "serve",
+        help="start the HTTP server using BARELLM_* environment settings",
+    )
 
     args = parser.parse_args()
-    if args.max_new_tokens < 0:
-        generate_parser.error("--max-new-tokens must be non-negative")
-    if args.temperature < 0:
-        generate_parser.error("--temperature must be non-negative")
-    if args.top_k < 0:
-        generate_parser.error("--top-k must be non-negative")
-    if not 0.0 < args.top_p <= 1.0:
-        generate_parser.error("--top-p must be in the range (0, 1]")
-
     if args.command == "generate":
+        if args.max_new_tokens < 0:
+            generate_parser.error("--max-new-tokens must be non-negative")
+        if args.temperature < 0:
+            generate_parser.error("--temperature must be non-negative")
+        if args.top_k < 0:
+            generate_parser.error("--top-k must be non-negative")
+        if not 0.0 < args.top_p <= 1.0:
+            generate_parser.error("--top-p must be in the range (0, 1]")
         _generate(args)
+    elif args.command == "serve":
+        from barellm.web import run_server
+
+        run_server()

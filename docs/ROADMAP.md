@@ -103,6 +103,8 @@ reference path. The default remains paged cached generation.
 - [x] Add Qwen3 model-loading example
 - [x] Add basic `barellm generate` CLI
 - [x] Add exportable engine and PyTorch profiling traces
+- [x] Add env-configured `barellm serve` health/profile API
+- [x] Add local Perfetto profile dashboard
 - [x] Document ownership boundaries and tensor shapes
 - [x] Document prefill versus decode
 - [x] Document contiguous versus paged caching
