@@ -39,6 +39,13 @@ def summarize(values: Sequence[float]) -> dict[str, float]:
     }
 
 
+def speedup(baseline_seconds: float, candidate_seconds: float) -> float:
+    """Return how many times faster a candidate is than a baseline."""
+    if baseline_seconds <= 0.0 or candidate_seconds <= 0.0:
+        raise ValueError("benchmark times must be positive")
+    return baseline_seconds / candidate_seconds
+
+
 def check_matching_tokens(
     reference: torch.Tensor | None,
     current: torch.Tensor,

@@ -7,6 +7,7 @@ from barellm.benchmark import (
     BenchmarkSample,
     check_matching_tokens,
     compare_token_ids,
+    speedup,
     summarize,
     summarize_samples,
 )
@@ -109,3 +110,10 @@ def test_compare_token_ids_reports_shape_mismatch() -> None:
         "expected_shape": [1, 2],
         "actual_shape": [1, 1],
     }
+
+
+def test_speedup_compares_baseline_to_candidate() -> None:
+    assert speedup(10.0, 2.0) == 5.0
+
+    with pytest.raises(ValueError, match="positive"):
+        speedup(0.0, 2.0)

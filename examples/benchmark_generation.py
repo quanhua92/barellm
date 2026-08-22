@@ -19,6 +19,7 @@ from barellm.benchmark import (
     BenchmarkSample,
     check_matching_tokens,
     compare_token_ids,
+    speedup,
     summarize_samples,
 )
 from barellm.config import DEVICE, DTYPE, MODEL_ID
@@ -158,15 +159,26 @@ def benchmark_case(
         "repeatability": repeatability,
     }
 
+    cached_summary = summarize_samples(samples["cached"])
+    uncached_summary = summarize_samples(samples["uncached"])
+    cached_total = cast(dict[str, float], cached_summary["total_seconds"])
+    uncached_total = cast(dict[str, float], uncached_summary["total_seconds"])
+    cached_decode = cast(dict[str, float], cached_summary["decode_seconds"])
+    uncached_decode = cast(dict[str, float], uncached_summary["decode_seconds"])
+
     return {
         "prompt_tokens": sequence_length,
         "correctness": correctness,
+        "speedup": {
+            "total": speedup(uncached_total["median"], cached_total["median"]),
+            "decode": speedup(uncached_decode["median"], cached_decode["median"]),
+        },
         "cached": {
-            "summary": summarize_samples(samples["cached"]),
+            "summary": cached_summary,
             "samples": [sample.to_dict() for sample in samples["cached"]],
         },
         "uncached": {
-            "summary": summarize_samples(samples["uncached"]),
+            "summary": uncached_summary,
             "samples": [sample.to_dict() for sample in samples["uncached"]],
         },
     }
@@ -177,7 +189,8 @@ def print_summary(cases: list[dict[str, object]]) -> None:
     print("  " + "-" * 76)
     print(
         f"  {'tokens':>8} {'mode':>10} {'median total':>15} "
-        f"{'median prefill':>16} {'median decode':>15} {'status':>10}"
+        f"{'median prefill':>16} {'median decode':>15} "
+        f"{'speedup':>10} {'status':>10}"
     )
     print("  " + "-" * 76)
     for case in cases:
@@ -189,12 +202,17 @@ def print_summary(cases: list[dict[str, object]]) -> None:
             prefill = cast(dict[str, float], summary["prefill_seconds"])
             decode = cast(dict[str, float], summary["decode_seconds"])
             correctness = cast(dict[str, object], case["correctness"])
+            speedups = cast(dict[str, float], case["speedup"])
             status = "OK" if correctness["matched"] else "WARNING"
+            speedup_text = (
+                f"{speedups['total']:.2f}x" if mode == "cached" else "baseline"
+            )
             print(
                 f"  {sequence_length:>8} {mode:>10} "
                 f"{total['median']:>14.3f}s "
                 f"{prefill['median']:>15.3f}s "
-                f"{decode['median']:>14.3f}s {status:>10}"
+                f"{decode['median']:>14.3f}s {speedup_text:>10} "
+                f"{status:>10}"
             )
         correctness = cast(dict[str, object], case["correctness"])
         if not correctness["matched"]:
