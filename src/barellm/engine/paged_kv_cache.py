@@ -134,24 +134,29 @@ class PagedLayerKV:
 
         start = self.seq_len
         end = start + key.shape[2]
+
         required_blocks = (end + self.storage.block_size - 1) // self.storage.block_size
         check(
             required_blocks <= len(self._request.blocks),
             "request does not have enough allocated KV blocks",
         )
 
-        for token_offset in range(key.shape[2]):
-            logical_pos = start + token_offset
-            block_index = logical_pos // self.storage.block_size
-            block_offset = logical_pos % self.storage.block_size
-            block_id = self._request.blocks[block_index].block_id
+        positions = torch.arange(
+            start, end, device=self.storage.device, dtype=torch.long
+        )
+        logical_blocks = positions // self.storage.block_size  # [T]
+        block_offsets = positions % self.storage.block_size  # [T]
+        physical_blocks = self._request.block_table[logical_blocks]  # [T]
 
-            self.storage.key_cache[self.layer_idx, block_id, :, block_offset, :] = key[
-                0, :, token_offset, :
-            ]
-            self.storage.value_cache[self.layer_idx, block_id, :, block_offset, :] = (
-                value[0, :, token_offset, :]
-            )
+        key_values = key[0].transpose(0, 1)  # [T, H, D]
+        value_values = value[0].transpose(0, 1)  # [T, H, D]
+
+        self.storage.key_cache[self.layer_idx, physical_blocks, :, block_offsets, :] = (
+            key_values
+        )
+        self.storage.value_cache[
+            self.layer_idx, physical_blocks, :, block_offsets, :
+        ] = value_values
 
         self._request.layer_seq_lens[self.layer_idx] = end
         return self.read()
